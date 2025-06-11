@@ -71,7 +71,7 @@ if selected_district != 'All':
 st.sidebar.markdown(f"### Total Rows: {len(df)}")
 
 # --- MAIN DASHBOARD ---
-st.title("📊 Advanced Kobo Dashboard (Live)")
+st.title("📊 Onsite Sanitation Dashboard (Live)")
 st.write("Filtered Dataset:")
 st.dataframe(df, use_container_width=True)
 
