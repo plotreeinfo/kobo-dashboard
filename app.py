@@ -1,4 +1,15 @@
 import streamlit as st
+
+# Remove Streamlit menu and GitHub icon
+hide_streamlit_style = """
+<style>
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+</style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+import streamlit as st
 import pandas as pd
 import plotly.express as px
 import requests
