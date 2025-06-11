@@ -67,7 +67,7 @@ for orig, new in col_mapping.items():
 # Convert submission date to datetime
 if "submission_date" in df.columns:
     df["submission_date"] = pd.to_datetime(df["submission_date"])
-    df["submission_date"] = df["submission_date"].dt.tz_convert(None)
+    df["submission_date"] = df["submission_date"].dt.tz_localize(None)  # <-- FIXED LINE
     df["submission_day"] = df["submission_date"].dt.date
     df["submission_week"] = df["submission_date"].dt.isocalendar().week
     df["submission_month"] = df["submission_date"].dt.month
