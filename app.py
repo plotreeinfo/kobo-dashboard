@@ -73,61 +73,133 @@ if "submission_date" in df.columns:
     df["submission_month"] = df["submission_date"].dt.month
 
 # --- SIDEBAR FILTERS ---
-st.sidebar.title("🔍 Filters")
+st.sidebar.title("🔍 Dashboard Filters")
 
-# Date filter (if available)
-if "submission_date" in df.columns:
-    min_date = df["submission_date"].min().date()
-    max_date = df["submission_date"].max().date()
-    date_range = st.sidebar.date_input(
-        "Date Range", 
-        value=(min_date, max_date),
-        min_value=min_date,
-        max_value=max_date
-    )
+# ====================
+# MAIN FILTERS SECTION
+# ====================
+with st.sidebar.expander("📅 Date & Time Filters", expanded=True):
+    if "submission_date" in df.columns:
+        min_date = df["submission_date"].min().date()
+        max_date = df["submission_date"].max().date()
+        date_range = st.date_input(
+            "Select Date Range", 
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date
+        )
+        
+        if len(date_range) == 2:
+            df = df[
+                (df["submission_date"].dt.date >= date_range[0]) & 
+                (df["submission_date"].dt.date <= date_range[1])
+            ]
     
-    if len(date_range) == 2:
+    # Time of day filter (if timestamp available)
+    if "submission_date" in df.columns:
+        df["submission_hour"] = df["submission_date"].dt.hour
+        hour_range = st.slider(
+            "Submission Hour Range",
+            min_value=0,
+            max_value=23,
+            value=(8, 17)
+        )
         df = df[
-            (df["submission_date"].dt.date >= date_range[0]) & 
-            (df["submission_date"].dt.date <= date_range[1])
+            (df["submission_hour"] >= hour_range[0]) & 
+            (df["submission_hour"] <= hour_range[1])
         ]
 
-# User filter
-if "username" in df.columns:
-    usernames = ['All'] + sorted(df["username"].dropna().unique().tolist())
-    selected_user = st.sidebar.selectbox("Select User", options=usernames)
-    if selected_user != 'All':
-        df = df[df["username"] == selected_user]
+# =====================
+# LOCATION FILTERS
+# =====================
+with st.sidebar.expander("📍 Location Filters", expanded=True):
+    if "district" in df.columns:
+        districts = ['All Districts'] + sorted(df["district"].dropna().unique().tolist())
+        selected_district = st.selectbox("Select District", options=districts)
+        if selected_district != 'All Districts':
+            df = df[df["district"] == selected_district]
+    
+    if "ward" in df.columns:
+        wards = ['All Wards'] + sorted(df["ward"].dropna().unique().tolist())
+        selected_ward = st.selectbox("Select Ward", options=wards)
+        if selected_ward != 'All Wards':
+            df = df[df["ward"] == selected_ward]
+    
+    if "village" in df.columns:
+        villages = ['All Villages'] + sorted(df["village"].dropna().unique().tolist())
+        selected_village = st.selectbox("Select Village", options=villages)
+        if selected_village != 'All Villages':
+            df = df[df["village"] == selected_village]
 
-# District filter
-if "district" in df.columns:
-    districts = ['All'] + sorted(df["district"].dropna().unique().tolist())
-    selected_district = st.sidebar.selectbox("Select District", options=districts)
-    if selected_district != 'All':
-        df = df[df["district"] == selected_district]
+# =====================
+# USER & STATUS FILTERS
+# =====================
+with st.sidebar.expander("👤 User & Status Filters", expanded=True):
+    if "username" in df.columns:
+        usernames = ['All Users'] + sorted(df["username"].dropna().unique().tolist())
+        selected_user = st.selectbox("Select Data Collector", options=usernames)
+        if selected_user != 'All Users':
+            df = df[df["username"] == selected_user]
+    
+    if "status" in df.columns:
+        statuses = ['All Statuses'] + sorted(df["status"].dropna().unique().tolist())
+        selected_status = st.selectbox("Select Form Status", options=statuses)
+        if selected_status != 'All Statuses':
+            df = df[df["status"] == selected_status]
 
-# Status filter (if available)
-if "status" in df.columns:
-    statuses = ['All'] + sorted(df["status"].dropna().unique().tolist())
-    selected_status = st.sidebar.selectbox("Select Status", options=statuses)
-    if selected_status != 'All':
-        df = df[df["status"] == selected_status]
+# =====================
+# DATA QUALITY FILTERS
+# =====================
+with st.sidebar.expander("🧰 Data Quality Filters", expanded=True):
+    # Data completeness slider
+    completeness_threshold = st.slider(
+        "Minimum Data Completeness (%)", 
+        min_value=0, 
+        max_value=100, 
+        value=80,
+        help="Show only records with this percentage of completed fields"
+    )
+    
+    # Photo verification filter
+    if any("photo" in col.lower() for col in df.columns):
+        photo_options = ['All', 'With Photos', 'Without Photos']
+        photo_filter = st.selectbox("Photo Verification", options=photo_options)
+        if photo_filter == 'With Photos':
+            photo_cols = [col for col in df.columns if 'photo' in col.lower()]
+            df = df[df[photo_cols].notnull().any(axis=1)]
+        elif photo_filter == 'Without Photos':
+            photo_cols = [col for col in df.columns if 'photo' in col.lower()]
+            df = df[df[photo_cols].isnull().all(axis=1)]
 
-# Data completeness filter
-completeness_threshold = st.sidebar.slider(
-    "Minimum Data Completeness (%)", 
-    min_value=0, 
-    max_value=100, 
-    value=80
-)
+# =====================
+# COLUMN SELECTION
+# =====================
+with st.sidebar.expander("📋 Column Selection", expanded=True):
+    all_columns = df.columns.tolist()
+    selected_columns = st.multiselect(
+        "Select Columns to Display", 
+        all_columns, 
+        default=all_columns[:10]  # Show first 10 columns by default
+    )
+    
+    # Column grouping
+    if st.checkbox("Group Related Columns"):
+        # This is a placeholder - you'd implement actual grouping logic based on your schema
+        st.info("Column grouping would be implemented based on your data schema")
 
-# Column selector
-all_columns = df.columns.tolist()
-selected_columns = st.sidebar.multiselect(
-    "Select Columns to Display", 
-    all_columns, 
-    default=all_columns[:10]  # Show first 10 columns by default
-)
+# =====================
+# SUMMARY STATISTICS
+# =====================
+st.sidebar.markdown("---")
+st.sidebar.subheader("📊 Filter Summary")
+st.sidebar.markdown(f"**Total Records:** {len(df)}")
+st.sidebar.markdown(f"**Date Range:** {date_range[0]} to {date_range[1]}")
+
+if "district" in df.columns and selected_district != 'All Districts':
+    st.sidebar.markdown(f"**District:** {selected_district}")
+
+if "username" in df.columns and selected_user != 'All Users':
+    st.sidebar.markdown(f"**Data Collector:** {selected_user}")
 
 # --- MAIN DASHBOARD ---
 st.title("📊 Onsite Sanitation Dashboard (Live)")
@@ -182,50 +254,77 @@ st.write(df.describe(include='all'))
 # --- VISUALIZATION SECTION ---
 st.subheader("📊 Interactive Visualizations")
 
-# Chart selection
-chart_col1, chart_col2, chart_col3 = st.columns([2, 2, 1])
-chart_type = chart_col3.selectbox("Chart Type", ["Bar", "Pie", "Histogram", "Scatter", "Line", "Map"])
+# Visualization controls in columns
+viz_col1, viz_col2, viz_col3 = st.columns([3, 2, 1])
 
-# Column selection
-if chart_type != "Map":
-    col_x = chart_col1.selectbox("X-axis", df.columns)
-    
-    if chart_type in ["Bar", "Scatter", "Line"]:
-        numeric_cols = df.select_dtypes(include='number').columns.tolist()
-        if numeric_cols:
-            col_y = chart_col2.selectbox("Y-axis", numeric_cols)
-        else:
-            st.warning("No numeric columns found for Y-axis")
-            col_y = None
+# Chart type selection
+chart_type = viz_col3.selectbox("Chart Type", ["Bar", "Pie", "Histogram", "Scatter", "Line", "Map"])
+
+# X-axis selection
+x_col = viz_col1.selectbox("X-axis Column", df.columns)
+
+# Y-axis selection (for appropriate charts)
+if chart_type in ["Bar", "Scatter", "Line"]:
+    numeric_cols = df.select_dtypes(include='number').columns.tolist()
+    if numeric_cols:
+        y_col = viz_col2.selectbox("Y-axis Column", numeric_cols)
     else:
-        col_y = None
+        st.warning("No numeric columns found for Y-axis")
+        y_col = None
 else:
-    if "latitude" in df.columns and "longitude" in df.columns:
-        col_x = "latitude"
-        col_y = "longitude"
-    else:
-        st.warning("Map requires latitude and longitude columns")
-        chart_type = "Bar"  # Fallback to bar chart
+    y_col = None
+
+# Color by selection
+color_col = viz_col2.selectbox("Color By", ['None'] + df.columns.tolist()) if chart_type in ["Bar", "Scatter"] else None
 
 # Generate charts
-if chart_type == "Bar" and col_y:
-    fig = px.bar(df, x=col_x, y=col_y, title=f"{col_y} by {col_x}")
+if chart_type == "Bar" and y_col:
+    fig = px.bar(
+        df, 
+        x=x_col, 
+        y=y_col, 
+        color=color_col if color_col != 'None' else None,
+        title=f"{y_col} by {x_col}"
+    )
     st.plotly_chart(fig, use_container_width=True)
     
 elif chart_type == "Pie":
-    fig = px.pie(df, names=col_x, title=f"Distribution of {col_x}")
+    fig = px.pie(
+        df, 
+        names=x_col, 
+        title=f"Distribution of {x_col}",
+        hole=0.3
+    )
     st.plotly_chart(fig, use_container_width=True)
     
-elif chart_type == "Histogram" and col_x:
-    fig = px.histogram(df, x=col_x, title=f"Distribution of {col_x}")
+elif chart_type == "Histogram":
+    fig = px.histogram(
+        df, 
+        x=x_col, 
+        title=f"Distribution of {x_col}",
+        nbins=20
+    )
     st.plotly_chart(fig, use_container_width=True)
     
-elif chart_type == "Scatter" and col_y:
-    fig = px.scatter(df, x=col_x, y=col_y, title=f"{col_y} vs {col_x}")
+elif chart_type == "Scatter" and y_col:
+    fig = px.scatter(
+        df, 
+        x=x_col, 
+        y=y_col, 
+        color=color_col if color_col != 'None' else None,
+        title=f"{y_col} vs {x_col}",
+        trendline="ols"
+    )
     st.plotly_chart(fig, use_container_width=True)
     
-elif chart_type == "Line" and col_y:
-    fig = px.line(df, x=col_x, y=col_y, title=f"{col_y} Trend by {col_x}")
+elif chart_type == "Line" and y_col:
+    fig = px.line(
+        df, 
+        x=x_col, 
+        y=y_col, 
+        title=f"{y_col} Trend by {x_col}",
+        markers=True
+    )
     st.plotly_chart(fig, use_container_width=True)
     
 elif chart_type == "Map" and "latitude" in df.columns and "longitude" in df.columns:
@@ -234,7 +333,9 @@ elif chart_type == "Map" and "latitude" in df.columns and "longitude" in df.colu
         lat="latitude",
         lon="longitude",
         hover_name="district" if "district" in df.columns else None,
-        zoom=8
+        zoom=8,
+        color=x_col if x_col != 'None' else None,
+        size_max=15
     )
     fig.update_layout(mapbox_style="open-street-map")
     st.plotly_chart(fig, use_container_width=True)
@@ -267,35 +368,6 @@ if "submission_date" in df.columns:
     else:
         st.warning("No submission data available for the selected period")
 
-# --- DATA QUALITY REPORT ---
-st.subheader("🧰 Data Quality Report")
-
-if len(df) > 0:
-    # Calculate completeness per column
-    completeness = df.notnull().mean() * 100
-    completeness_df = pd.DataFrame({
-        'Column': completeness.index,
-        'Completeness (%)': completeness.values
-    }).sort_values('Completeness (%)', ascending=True)
-    
-    # Show top 10 incomplete columns
-    st.write("**Column Completeness:**")
-    fig = px.bar(
-        completeness_df.head(10),
-        x='Completeness (%)',
-        y='Column',
-        orientation='h',
-        title='Top 10 Incomplete Columns'
-    )
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Show duplicate analysis
-    duplicates = df.duplicated().sum()
-    dup_percent = round((duplicates / len(df)) * 100, 1)
-    st.metric("Duplicate Entries", f"{duplicates} ({dup_percent}%)")
-else:
-    st.warning("No data available for quality analysis")
-
 # --- DATA DOWNLOAD ---
 st.subheader("📥 Download Data")
 csv = df.to_csv(index=False).encode('utf-8')
@@ -318,4 +390,4 @@ col2.download_button(
     help="Download filtered data as Excel spreadsheet"
 )
 
-st.success("✅ Dashboard loaded with live data and enhanced functionality")
+st.success("✅ Dashboard loaded with professional filters and comprehensive analytics")
