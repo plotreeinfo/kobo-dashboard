@@ -43,6 +43,23 @@ def fetch_kobo_data():
         st.error(f"Failed to load data: {str(e)}")
         return pd.DataFrame()
 
+def clean_kobo_dataframe(df):
+    # Drop metadata columns (those starting with '_')
+    return df[[col for col in df.columns if not col.startswith('_')]]
+
+def reorder_columns(df, priority_cols=None):
+    if priority_cols is None:
+        priority_cols = ["submission_date", "enumerator_name", "location"]
+    existing_priority = [col for col in priority_cols if col in df.columns]
+    remaining = [col for col in df.columns if col not in existing_priority]
+    return df[existing_priority + remaining]
+
+def convert_media_links(df):
+    for col in df.columns:
+        if df[col].astype(str).str.startswith("http").any():
+            df[col] = df[col].apply(lambda x: f"[View]({x})" if isinstance(x, str) and x.startswith("http") else x)
+    return df
+
 def trigger_kobo_export(export_type="xls", lang="English", select_multiple_format="separate", format_option="xml", include_media=True, group_sep="/", field_as_text=True):
     headers = {'Authorization': f'Token {KOBO_TOKEN}'}
     payload = {
@@ -95,6 +112,11 @@ df = fetch_kobo_data()
 if df.empty:
     st.warning("No data available - please check your connection or API token.")
     st.stop()
+
+# Clean, reorder, and convert media links
+df = clean_kobo_dataframe(df)
+df = reorder_columns(df)
+df = convert_media_links(df)
 
 # Preview table
 st.dataframe(df, use_container_width=True, height=600)
