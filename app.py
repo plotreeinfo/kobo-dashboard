@@ -73,8 +73,9 @@ def trigger_kobo_export(token, export_type="xls", lang="English", select_multipl
         "hierarchical_labels": (format_option == "labels")
     }
 
-    if lang:
-        payload["lang"] = lang.lower()
+    lang_clean = lang.lower() if lang and lang.lower() != "none" else None
+    if lang_clean:
+        payload["lang"] = lang_clean
 
     payload = {k: v for k, v in payload.items() if v is not None}
 
