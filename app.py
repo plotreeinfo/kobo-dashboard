@@ -1,16 +1,15 @@
 import streamlit as st
 import pandas as pd
 import requests
-import io
-import time
 from datetime import datetime
 from requests.auth import HTTPBasicAuth
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
 # ==============================================
 # CONFIGURATION
 # ==============================================
 
-# Remove Streamlit menu and GitHub icon
+# Hide Streamlit UI elements
 hide_streamlit_style = """
 <style>
 #MainMenu {visibility: hidden;}
@@ -20,13 +19,12 @@ header {visibility: hidden;}
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# KoboToolbox API credentials
+# KoboToolbox API credentials (DO NOT TOUCH)
 KOBO_USERNAME = "plotree"
 KOBO_PASSWORD = "Pl@tr33@123"
 FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
 BASE_URL = "https://kf.kobotoolbox.org"
 API_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
-EXPORT_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
 
 # ==============================================
 # DATA FUNCTIONS
@@ -44,71 +42,26 @@ def fetch_kobo_data():
         st.error(f"Failed to load data: {str(e)}")
         return pd.DataFrame()
 
-def trigger_kobo_export(export_type="xls"):
-    """Trigger a proper KoboToolbox export"""
-    headers = {'Authorization': f'Token {KOBO_PASSWORD}'}
-    payload = {
-        "type": export_type,
-        "fields_from_all_versions": "true",
-        "group_sep": "/",
-        "hierarchy_in_labels": "true",
-        "include_media_urls": "true",
-        "lang": "English"
-    }
-    response = requests.post(EXPORT_URL, headers=headers, json=payload)
-    if response.status_code == 201:
-        return response.json().get('url')
-    return None
-
-def check_export_status(export_url):
-    """Check status of a KoboToolbox export"""
-    headers = {'Authorization': f'Token {KOBO_PASSWORD}'}
-    response = requests.get(export_url, headers=headers)
-    if response.status_code == 200:
-        return response.json().get('status'), response.json().get('result')
-    return None, None
-
-def prepare_kobo_style_export(df):
-    """Format our data to match KoboToolbox export structure"""
-    # Define system columns in Kobo's order
-    system_columns = [
-        '_id', '_uuid', '_submission_time', '_validation_status',
-        '_notes', '_status', '_submitted_by', '_tags', '_index', '__version__'
-    ]
-    
-    # Get existing system columns
-    existing_system_cols = [col for col in system_columns if col in df.columns]
-    
-    # Get other columns (non-system)
-    other_cols = [col for col in df.columns if col not in system_columns]
-    
-    # Reorder columns: system first, then others
-    return df[existing_system_cols + other_cols]
-
 # ==============================================
-# DASHBOARD LAYOUT
+# LOAD DATA
 # ==============================================
 
-# Load data
 df = fetch_kobo_data()
 
 if df.empty:
-    st.warning("No data available - please check your connection")
+    st.warning("No data available - please check your connection.")
     st.stop()
 
-# Standardize column names
+# Rename and clean columns
 col_mapping = {
     "username": "username",
     "_1_1_Name_of_the_City_": "district",
     "_geolocation_latitude": "latitude",
     "_geolocation_longitude": "longitude"
 }
+df = df.rename(columns={k: v for k, v in col_mapping.items() if k in df.columns})
 
-for orig, new in col_mapping.items():
-    if orig in df.columns:
-        df = df.rename(columns={orig: new})
-
-# Process dates if available
+# Format date if available
 if "_submission_time" in df.columns:
     df["submission_date"] = pd.to_datetime(df["_submission_time"])
     df["submission_date"] = df["submission_date"].dt.tz_localize(None)
@@ -131,14 +84,13 @@ if "submission_date" in df.columns:
             min_value=min_date,
             max_value=max_date
         )
-        
         if len(date_range) == 2:
             df = df[
                 (df["submission_date"].dt.date >= date_range[0]) & 
                 (df["submission_date"].dt.date <= date_range[1])
             ]
 
-# Location Filters
+# District Filter
 with st.sidebar.expander("📍 Location", expanded=True):
     if "district" in df.columns:
         districts = ['All'] + sorted(df["district"].dropna().unique().tolist())
@@ -154,19 +106,11 @@ if "username" in df.columns:
         if selected_user != 'All':
             df = df[df["username"] == selected_user]
 
-# Data Quality
-with st.sidebar.expander("🧰 Data Quality", expanded=True):
-    completeness = st.slider(
-        "Minimum data completeness (%)",
-        min_value=0, max_value=100, value=80
-    )
-    
-    if any("photo" in col.lower() for col in df.columns):
-        photo_filter = st.selectbox(
-            "Photos", 
-            ['All', 'With Photos', 'Without Photos']
-        )
-        photo_cols = [col for col in df.columns if 'photo' in col.lower()]
+# Photo Filter
+with st.sidebar.expander("🖼️ Photos", expanded=True):
+    photo_cols = [col for col in df.columns if 'photo' in col.lower()]
+    if photo_cols:
+        photo_filter = st.radio("Photo status", ['All', 'With Photos', 'Without Photos'])
         if photo_filter == 'With Photos':
             df = df[df[photo_cols].notnull().any(axis=1)]
         elif photo_filter == 'Without Photos':
@@ -176,128 +120,67 @@ with st.sidebar.expander("🧰 Data Quality", expanded=True):
 # MAIN DASHBOARD
 # ==============================================
 
-st.title("📊 KoboToolbox Data Dashboard")
+st.title("📊 KoboToolbox Dashboard")
 
-# Key Metrics
-st.subheader("📈 Overview Metrics")
+# Overview Metrics
+st.subheader("📈 Summary Metrics")
 cols = st.columns(4)
 cols[0].metric("Total Submissions", len(df))
 if "submission_date" in df.columns:
     today = datetime.now().date()
-    cols[1].metric("Today's Submissions", 
-                  len(df[df["submission_date"].dt.date == today]))
+    cols[1].metric("Today's Submissions", len(df[df["submission_date"].dt.date == today]))
 if "username" in df.columns:
     cols[2].metric("Unique Collectors", df["username"].nunique())
-cols[3].metric("Data Completeness", 
-              f"{round((1 - df.isnull().mean().mean()) * 100, 1)}%")
-
-# Data Preview
-st.subheader("🔍 Data Preview")
-st.dataframe(df.head(1000), use_container_width=True)
+cols[3].metric("Data Completeness", f"{round((1 - df.isnull().mean().mean()) * 100, 1)}%")
 
 # ==============================================
-# DATA EXPORT SECTION
+# INTERACTIVE TABLE WITH EXPORT OPTIONS
 # ==============================================
 
-st.subheader("📥 Download Data")
+st.subheader("🔍 Interactive Data Table with Export")
 
-# Option 1: Direct Kobo Export
-st.markdown("### 1. Official KoboToolbox Export")
-st.write("Get data in exact KoboToolbox format (may take 1-2 minutes)")
+# Build interactive AgGrid table
+gb = GridOptionsBuilder.from_dataframe(df)
+gb.configure_default_column(filter=True, sortable=True, resizable=True, editable=False)
+gb.configure_grid_options(
+    enableRangeSelection=True,
+    domLayout='normal',
+    rowSelection='multiple',
+    enableBrowserTooltips=True,
+    pagination=True,
+    paginationPageSize=20,
+    suppressExcelExport=False
+)
+gb.configure_side_bar()  # Filters & search
+gb.configure_grid_options(enableCellTextSelection=True)
 
-if st.button("Generate KoboToolbox Export"):
-    with st.spinner("Requesting export from KoboToolbox..."):
-        export_url = trigger_kobo_export()
-        
-        if export_url:
-            st.session_state.export_url = export_url
-            st.success("Export requested! Checking status...")
-            
-            status_bar = st.progress(0)
-            status_text = st.empty()
-            
-            for i in range(30):  # Check for up to 5 minutes
-                status, result_url = check_export_status(export_url)
-                
-                if status == "complete":
-                    status_bar.progress(100)
-                    status_text.success("Export ready!")
-                    st.markdown(
-                        f'<a href="{BASE_URL}{result_url}" download>Download XLS Export</a>',
-                        unsafe_allow_html=True
-                    )
-                    break
-                elif status == "error":
-                    status_text.error("Export failed")
-                    break
-                else:
-                    status_bar.progress((i + 1) * 3)
-                    status_text.text(f"Status: {status}...")
-                    time.sleep(10)
-            else:
-                status_text.warning("Export taking longer than expected. Please check KoboToolbox later.")
-
-# Option 2: Formatted Export
-st.markdown("### 2. Formatted Export")
-st.write("Faster download with similar structure to Kobo")
-
-# Prepare Kobo-style export
-export_df = prepare_kobo_style_export(df)
-
-# CSV Download
-csv = export_df.to_csv(index=False).encode('utf-8')
-st.download_button(
-    "Download CSV (Kobo-style)",
-    csv,
-    "kobo_export.csv",
-    "text/csv",
-    help="CSV with Kobo-like column ordering"
+# Right-click context menu for export
+gb.configure_grid_options(
+    getContextMenuItems=JsCode("""
+    function(params) {
+        var result = [
+            'copy',
+            'copyWithHeaders',
+            'paste',
+            'separator',
+            'export'
+        ];
+        return result;
+    }
+    """)
 )
 
-# Excel Download
-excel_io = io.BytesIO()
-with pd.ExcelWriter(excel_io, engine='openpyxl') as writer:
-    # Main data sheet
-    export_df.to_excel(writer, sheet_name='data', index=False)
-    
-    # Media URLs sheet
-    media_cols = [col for col in export_df.columns if any(x in col.lower() for x in ['url', 'image', 'photo'])]
-    if media_cols:
-        media_df = export_df[media_cols]
-        media_df.to_excel(writer, sheet_name='media_urls', index=False)
+gridOptions = gb.build()
 
-st.download_button(
-    "Download Excel (Kobo-style)",
-    excel_io.getvalue(),
-    "kobo_export.xlsx",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    help="Excel with Kobo-like structure"
+AgGrid(
+    df,
+    gridOptions=gridOptions,
+    update_mode=GridUpdateMode.NO_UPDATE,
+    fit_columns_on_grid_load=True,
+    enable_enterprise_modules=True,
+    use_checkbox=True,
+    allow_unsafe_jscode=True,
+    theme="alpine"
 )
 
-# ==============================================
-# VISUALIZATIONS
-# ==============================================
-
-st.subheader("📊 Visualizations")
-
-if "submission_date" in df.columns:
-    st.markdown("### Submission Trends")
-    freq = st.selectbox("Frequency", ["Daily", "Weekly", "Monthly"])
-    
-    if freq == "Daily":
-        group_col = "submission_day"
-    elif freq == "Weekly":
-        df["submission_week"] = df["submission_date"].dt.to_period('W').dt.start_time
-        group_col = "submission_week"
-    else:
-        df["submission_month"] = df["submission_date"].dt.to_period('M').dt.start_time
-        group_col = "submission_month"
-    
-    trend_data = df.groupby(group_col).size().reset_index(name='count')
-    fig = px.line(trend_data, x=group_col, y='count', 
-                 title=f"Submissions by {freq}")
-    st.plotly_chart(fig, use_container_width=True)
-
-# Additional visualizations can be added here
-
-st.success("✅ Dashboard ready")
+st.success("✅ Dashboard ready. Right-click any row to export.")
