@@ -20,7 +20,7 @@ auth = HTTPBasicAuth(username, password)
 @st.cache_data(ttl=refresh_interval)
 def fetch_xls_export():
     # Step 1: Create XLS export
-    export_url = f"{base_url}/api/v1/forms/{form_uid}/exports/"
+    export_url = f"{base_url}/api/v2/forms/{form_uid}/exports/"
     export_payload = {"format": "xls"}
 
     export_response = requests.post(export_url, auth=auth, json=export_payload)
