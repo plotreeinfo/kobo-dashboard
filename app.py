@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import requests
+import time
 import io
 from requests.auth import HTTPBasicAuth
 from datetime import datetime
@@ -9,139 +10,109 @@ from datetime import datetime
 username = "plotree"
 password = "Pl@tr33@123"
 form_uid = "aJHsRZXT3XEpCoxn9Ct3qZ"
-refresh_interval = 180  # 3 minutes in seconds
+base_url = "https://kc.kobotoolbox.org"
+refresh_interval = 180  # 3 minutes
 
-# Hide Streamlit header, footer, and menu
-hide_streamlit_style = """
-<style>
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-header {visibility: hidden;}
-</style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+# --- AUTH ---
+auth = HTTPBasicAuth(username, password)
 
-# --- KOBO XLS EXPORT URL ---
-xls_url = f"https://kc.kobotoolbox.org/api/v1/data/{form_uid}.xls"
-EXPORT_PARAMS = {
-    "format": "xls",
-    "type": "all",                      # export all submissions
-    "lang": "en",                       # labels and values in English
-    "group_sep": "/",                  # include groups in header names
-    "media_all": "true",               # include media download links
-    "fields_from_all_versions": "true",
-    "hierarchy_in_labels": "true",
-    "value_labels": "false",           # keep values (not labels)
-}
-
-# --- LOAD DATA FUNCTION (REFRESH EVERY 3 MINUTES) ---
+# --- CREATE XLS EXPORT AND DOWNLOAD ---
 @st.cache_data(ttl=refresh_interval)
-def load_data():
-    response = requests.get(xls_url, params=EXPORT_PARAMS, auth=HTTPBasicAuth(username, password))
-    if response.status_code == 200:
-        excel_data = io.BytesIO(response.content)
-        df = pd.read_excel(excel_data)
+def fetch_xls_export():
+    # Step 1: Create XLS export
+    export_url = f"{base_url}/api/v1/forms/{form_uid}/exports/"
+    export_payload = {"format": "xls"}
 
-        # Drop system fields
-        system_cols = [
-            "_id", "_uuid", "_submission_time", "_validation_status", "_notes", "_status",
-            "_submitted_by", "_tags", "_index", "__version__"
-        ]
-        df = df.drop(columns=[col for col in system_cols if col in df.columns], errors='ignore')
+    export_response = requests.post(export_url, auth=auth, json=export_payload)
 
-        return df
-    else:
-        st.error(f"❌ Failed to load XLS data. HTTP {response.status_code}: {response.text}")
+    if export_response.status_code != 201:
+        st.error(f"❌ Failed to create XLS export: {export_response.status_code} - {export_response.text}")
         return pd.DataFrame()
 
-# --- LOAD DATA ---
-df = load_data()
+    export_json = export_response.json()
+    export_id = export_json.get("id")
+    download_url = export_json.get("url")
+
+    # Step 2: Poll until export is ready (usually takes a few seconds)
+    status = export_json.get("status", "pending")
+    retries = 10
+    while status != "complete" and retries > 0:
+        time.sleep(3)
+        poll = requests.get(f"{export_url}{export_id}/", auth=auth)
+        poll_json = poll.json()
+        status = poll_json.get("status")
+        download_url = poll_json.get("url")
+        retries -= 1
+
+    if status != "complete":
+        st.error("❌ XLS export did not complete in time.")
+        return pd.DataFrame()
+
+    # Step 3: Download XLS
+    file_response = requests.get(download_url, auth=auth)
+    if file_response.status_code != 200:
+        st.error(f"❌ Failed to download XLS file: {file_response.status_code}")
+        return pd.DataFrame()
+
+    df = pd.read_excel(io.BytesIO(file_response.content))
+    
+    # Drop system fields
+    system_fields = ["_id", "_uuid", "_submission_time", "_submitted_by", "_validation_status"]
+    df = df.drop(columns=[col for col in system_fields if col in df.columns], errors="ignore")
+
+    return df
+
+# --- FETCH DATA ---
+df = fetch_xls_export()
 if df.empty:
     st.stop()
 
-# --- COLUMN CLEANUP ---
-if "submission_date" not in df.columns and "start" in df.columns:
+# --- PROCESS DATES ---
+if "start" in df.columns:
     df = df.rename(columns={"start": "submission_date"})
 
 if "submission_date" in df.columns:
     df["submission_date"] = pd.to_datetime(df["submission_date"])
     df["submission_day"] = df["submission_date"].dt.date
-    df["submission_month"] = df["submission_date"].dt.month
-    df["submission_week"] = df["submission_date"].dt.isocalendar().week
 
 # --- SIDEBAR FILTERS ---
 st.sidebar.title("🔍 Filters")
-
-# Date Range
 if "submission_date" in df.columns:
     min_date = df["submission_date"].min().date()
     max_date = df["submission_date"].max().date()
-    date_range = st.sidebar.date_input(
-        "Filter by Date", value=(min_date, max_date), min_value=min_date, max_value=max_date
-    )
+    date_range = st.sidebar.date_input("Date Range", (min_date, max_date))
     if len(date_range) == 2:
         df = df[
             (df["submission_date"].dt.date >= date_range[0]) &
             (df["submission_date"].dt.date <= date_range[1])
         ]
 
-# Location Filters
-for loc in ["district", "ward", "village"]:
-    if loc in df.columns:
-        options = ['All'] + sorted(df[loc].dropna().unique().tolist())
-        selection = st.sidebar.selectbox(f"Select {loc.title()}", options)
-        if selection != 'All':
-            df = df[df[loc] == selection]
+# Optional filters
+for col in ["district", "ward", "village"]:
+    if col in df.columns:
+        options = ["All"] + sorted(df[col].dropna().unique().tolist())
+        selected = st.sidebar.selectbox(f"{col.title()} Filter", options)
+        if selected != "All":
+            df = df[df[col] == selected]
 
-# User Filter
-if "username" in df.columns:
-    usernames = ['All'] + sorted(df["username"].dropna().unique().tolist())
-    selected_user = st.sidebar.selectbox("Select Data Collector", usernames)
-    if selected_user != 'All':
-        df = df[df["username"] == selected_user]
-
-# Photo filter
-photo_cols = [col for col in df.columns if 'photo' in col.lower()]
-if photo_cols:
-    photo_filter = st.sidebar.selectbox("Photo Presence", ["All", "With Photos", "Without Photos"])
-    if photo_filter == "With Photos":
-        df = df[df[photo_cols].notnull().any(axis=1)]
-    elif photo_filter == "Without Photos":
-        df = df[df[photo_cols].isnull().all(axis=1)]
-
-# Data completeness filter
-completeness_threshold = st.sidebar.slider(
-    "Min Data Completeness (%)", min_value=0, max_value=100, value=80
-)
-row_completeness = df.notnull().mean(axis=1) * 100
-df = df[row_completeness >= completeness_threshold]
-
-# --- DASHBOARD HEADER ---
-st.title("📊 KoboToolbox XLS Dashboard (Live)")
-st.caption(f"⏱️ Auto-refreshes every {refresh_interval // 60} minutes")
-
-# --- METRICS ---
-col1, col2, col3 = st.columns(3)
-col1.metric("📋 Total Forms", len(df))
+# --- DASHBOARD METRICS ---
+st.title("📊 KoboToolbox XLS Dashboard")
+col1, col2 = st.columns(2)
+col1.metric("📋 Total Submissions", len(df))
 today = datetime.now().date()
 if "submission_date" in df.columns:
-    col2.metric("🕒 Submitted Today", len(df[df["submission_date"].dt.date == today]))
-col3.metric("✅ Completeness", f"{round(row_completeness.mean(), 1)}%")
+    col2.metric("🕒 Today", len(df[df["submission_date"].dt.date == today]))
 
-# --- DATA PREVIEW ---
-st.subheader("📄 Filtered Data")
+# --- DATAFRAME ---
+st.subheader("📄 Data Table")
 st.dataframe(df, use_container_width=True)
 
 # --- DOWNLOADS ---
-st.subheader("📥 Download Filtered Data")
-csv_data = df.to_csv(index=False).encode('utf-8')
-excel_io = io.BytesIO()
-df.to_excel(excel_io, index=False, engine='openpyxl')
+csv = df.to_csv(index=False).encode("utf-8")
+excel = io.BytesIO()
+df.to_excel(excel, index=False)
 
 col1, col2 = st.columns(2)
-col1.download_button("⬇️ Download CSV", csv_data, file_name="kobo_data.csv", mime="text/csv")
-col2.download_button("⬇️ Download Excel", excel_io.getvalue(), file_name="kobo_data.xlsx",
-                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-# --- SUCCESS ---
-st.success("✅ Dashboard is live and synced with XLS export from KoboToolbox")
+col1.download_button("⬇️ Download CSV", csv, "kobo_data.csv", "text/csv")
+col2.download_button("⬇️ Download Excel", excel.getvalue(), "kobo_data.xlsx", 
+                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
