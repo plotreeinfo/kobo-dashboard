@@ -6,10 +6,9 @@ from requests.auth import HTTPBasicAuth
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
 # ==============================================
-# CONFIGURATION
+# CONFIGURATION (leave your Kobo creds & URLs untouched)
 # ==============================================
 
-# Hide Streamlit UI elements
 hide_streamlit_style = """
 <style>
 #MainMenu {visibility: hidden;}
@@ -19,12 +18,11 @@ header {visibility: hidden;}
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# KoboToolbox API credentials (DO NOT TOUCH)
 KOBO_USERNAME = "plotree"
 KOBO_PASSWORD = "Pl@tr33@123"
-FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
-BASE_URL = "https://kf.kobotoolbox.org"
-API_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
+FORM_UID        = "aJHsRZXT3XEpCoxn9Ct3qZ"
+BASE_URL        = "https://kf.kobotoolbox.org"
+API_URL         = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
 
 # ==============================================
 # DATA FUNCTIONS
@@ -32,40 +30,56 @@ API_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
 
 @st.cache_data(ttl=3600)
 def fetch_kobo_data():
-    """Fetch raw data from KoboToolbox API"""
     try:
-        response = requests.get(API_URL, auth=HTTPBasicAuth(KOBO_USERNAME, KOBO_PASSWORD))
-        response.raise_for_status()
-        data = response.json().get("results", [])
-        return pd.DataFrame(data)
+        resp = requests.get(API_URL, auth=HTTPBasicAuth(KOBO_USERNAME, KOBO_PASSWORD))
+        resp.raise_for_status()
+        return pd.DataFrame(resp.json().get("results", []))
     except Exception as e:
-        st.error(f"Failed to load data: {str(e)}")
+        st.error(f"Error loading data: {e}")
         return pd.DataFrame()
 
 # ==============================================
-# LOAD DATA
+# LOAD + CLEAN DATA
 # ==============================================
 
 df = fetch_kobo_data()
-
 if df.empty:
-    st.warning("No data available - please check your connection.")
+    st.warning("No data available – check your connection or credentials.")
     st.stop()
 
-# Rename and clean columns
+# (Optional) rename for readability
 col_mapping = {
     "username": "username",
     "_1_1_Name_of_the_City_": "district",
     "_geolocation_latitude": "latitude",
     "_geolocation_longitude": "longitude"
 }
-df = df.rename(columns={k: v for k, v in col_mapping.items() if k in df.columns})
+df.rename(columns={k: v for k, v in col_mapping.items() if k in df.columns}, inplace=True)
 
-# Format date if available
+# submission date
 if "_submission_time" in df.columns:
-    df["submission_date"] = pd.to_datetime(df["_submission_time"])
-    df["submission_date"] = df["submission_date"].dt.tz_localize(None)
+    df["submission_date"] = pd.to_datetime(df["_submission_time"]).dt.tz_localize(None)
     df["submission_day"] = df["submission_date"].dt.date
+
+# ==============================================
+# REORDER COLUMNS TO MATCH YOUR KOBO FORM
+# ==============================================
+
+# 🔑 Fill this list with your exact Kobo question fields in the order they appear on your form:
+field_order = [
+    "_submission_time",
+    "username",
+    "_1_1_Name_of_the_City_",
+    "district",
+    "latitude",
+    "longitude",
+    # ... add your other question keys here, in form‐sequence
+]
+
+# Keep only those that exist, then append any extras at the end
+ordered = [c for c in field_order if c in df.columns]
+others  = [c for c in df.columns if c not in ordered]
+df = df[ordered + others]
 
 # ==============================================
 # SIDEBAR FILTERS
@@ -73,114 +87,83 @@ if "_submission_time" in df.columns:
 
 st.sidebar.title("🔍 Filters")
 
-# Date Filter
+# Date range
 if "submission_date" in df.columns:
     with st.sidebar.expander("📅 Date Range", expanded=True):
-        min_date = df["submission_date"].min().date()
-        max_date = df["submission_date"].max().date()
-        date_range = st.date_input(
-            "Select date range",
-            value=(min_date, max_date),
-            min_value=min_date,
-            max_value=max_date
-        )
-        if len(date_range) == 2:
-            df = df[
-                (df["submission_date"].dt.date >= date_range[0]) & 
-                (df["submission_date"].dt.date <= date_range[1])
-            ]
+        mn, mx = df["submission_date"].dt.date.min(), df["submission_date"].dt.date.max()
+        dr = st.date_input("Select range", (mn, mx), min_value=mn, max_value=mx)
+        if len(dr) == 2:
+            df = df[(df["submission_date"].dt.date >= dr[0]) & (df["submission_date"].dt.date <= dr[1])]
 
-# District Filter
-with st.sidebar.expander("📍 Location", expanded=True):
+# District
+with st.sidebar.expander("📍 District", expanded=True):
     if "district" in df.columns:
-        districts = ['All'] + sorted(df["district"].dropna().unique().tolist())
-        selected_district = st.selectbox("District", districts)
-        if selected_district != 'All':
-            df = df[df["district"] == selected_district]
+        opts = ["All"] + sorted(df["district"].dropna().unique().tolist())
+        sel  = st.selectbox("District", opts)
+        if sel != "All":
+            df = df[df["district"] == sel]
 
-# User Filter
+# Collector
 if "username" in df.columns:
-    with st.sidebar.expander("👤 Data Collectors", expanded=True):
-        users = ['All'] + sorted(df["username"].dropna().unique().tolist())
-        selected_user = st.selectbox("Select user", users)
-        if selected_user != 'All':
-            df = df[df["username"] == selected_user]
-
-# Photo Filter
-with st.sidebar.expander("🖼️ Photos", expanded=True):
-    photo_cols = [col for col in df.columns if 'photo' in col.lower()]
-    if photo_cols:
-        photo_filter = st.radio("Photo status", ['All', 'With Photos', 'Without Photos'])
-        if photo_filter == 'With Photos':
-            df = df[df[photo_cols].notnull().any(axis=1)]
-        elif photo_filter == 'Without Photos':
-            df = df[df[photo_cols].isnull().all(axis=1)]
+    with st.sidebar.expander("👤 Collector", expanded=True):
+        users = ["All"] + sorted(df["username"].dropna().unique().tolist())
+        sel   = st.selectbox("Collector", users)
+        if sel != "All":
+            df = df[df["username"] == sel]
 
 # ==============================================
 # MAIN DASHBOARD
 # ==============================================
 
 st.title("📊 KoboToolbox Dashboard")
-
-# Overview Metrics
-st.subheader("📈 Summary Metrics")
-cols = st.columns(4)
-cols[0].metric("Total Submissions", len(df))
+st.subheader("📈 Key Metrics")
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Total Subs", len(df))
 if "submission_date" in df.columns:
     today = datetime.now().date()
-    cols[1].metric("Today's Submissions", len(df[df["submission_date"].dt.date == today]))
+    c2.metric("Today's Subs", len(df[df["submission_date"].dt.date == today]))
 if "username" in df.columns:
-    cols[2].metric("Unique Collectors", df["username"].nunique())
-cols[3].metric("Data Completeness", f"{round((1 - df.isnull().mean().mean()) * 100, 1)}%")
+    c3.metric("Unique Collectors", df["username"].nunique())
+c4.metric("Completeness", f"{round((1 - df.isnull().mean().mean())*100,1)}%")
 
 # ==============================================
-# INTERACTIVE TABLE WITH EXPORT OPTIONS
+# INTERACTIVE TABLE WITH FULL-HEIGHT & EXPORT
 # ==============================================
 
-st.subheader("🔍 Interactive Data Table with Export")
+st.subheader("🔍 Data Table (Right-click to export CSV/XLSX)")
 
-# Build interactive AgGrid table
+# Configure AgGrid
 gb = GridOptionsBuilder.from_dataframe(df)
-gb.configure_default_column(filter=True, sortable=True, resizable=True, editable=False)
+gb.configure_default_column(filter=True, sortable=True, resizable=True)
+gb.configure_side_bar()  
 gb.configure_grid_options(
     enableRangeSelection=True,
-    domLayout='normal',
+    domLayout='autoHeight',          # auto-expand height
     rowSelection='multiple',
-    enableBrowserTooltips=True,
     pagination=True,
-    paginationPageSize=20,
+    paginationPageSize=25,
     suppressExcelExport=False
 )
-gb.configure_side_bar()  # Filters & search
-gb.configure_grid_options(enableCellTextSelection=True)
-
-# Right-click context menu for export
+# Right-click menu
 gb.configure_grid_options(
     getContextMenuItems=JsCode("""
     function(params) {
-        var result = [
-            'copy',
-            'copyWithHeaders',
-            'paste',
-            'separator',
-            'export'
-        ];
-        return result;
+      return ['copy','copyWithHeaders','separator','export'];
     }
     """)
 )
+grid_opts = gb.build()
 
-gridOptions = gb.build()
-
+# Render
 AgGrid(
     df,
-    gridOptions=gridOptions,
+    gridOptions=grid_opts,
     update_mode=GridUpdateMode.NO_UPDATE,
-    fit_columns_on_grid_load=True,
-    enable_enterprise_modules=True,
-    use_checkbox=True,
     allow_unsafe_jscode=True,
-    theme="alpine"
+    enable_enterprise_modules=True,
+    theme="alpine",
+    height=600,        # force a minimum height
+    width='100%'
 )
 
-st.success("✅ Dashboard ready. Right-click any row to export.")
+st.success("✅ Dashboard ready – just right-click any cell/row to export!")
