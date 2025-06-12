@@ -21,7 +21,7 @@ header {visibility: hidden;}
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # KoboToolbox API configuration
-KOBO_TOKEN = "YOUR_KOBO_API_TOKEN"  # Replace with your actual token
+KOBO_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"  # Replace with your actual token
 FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
 BASE_URL = "https://kf.kobotoolbox.org"
 API_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
@@ -34,7 +34,7 @@ EXPORT_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
 @st.cache_data(ttl=3600)
 def fetch_kobo_data():
     try:
-        headers = {'Authorization': f'Token {"04714621fa3d605ff0a4aa5cc2df7cfa961bf256"}'}
+        headers = {'Authorization': f'Token {KOBO_TOKEN}'}
         response = requests.get(API_URL, headers=headers)
         response.raise_for_status()
         data = response.json().get("results", [])
