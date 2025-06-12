@@ -27,7 +27,7 @@ API_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
 EXPORT_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
 
 # ✅ Your Kobo API Token (Replace this with your actual token)
-KOBO_TOKEN = "Token 9bff17aafbb2c2e0f6fc8ac18a8d7c1d5e134df1"
+KOBO_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
 
 # ==============================================
 # FUNCTIONS
