@@ -1,169 +1,99 @@
 import streamlit as st
-import pandas as pd
 import requests
+import time
 from datetime import datetime
 from requests.auth import HTTPBasicAuth
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
-# ==============================================
-# CONFIGURATION (leave your Kobo creds & URLs untouched)
-# ==============================================
-
-hide_streamlit_style = """
-<style>
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-header {visibility: hidden;}
-</style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+# ================================
+# CONFIGURATION
+# ================================
 
 KOBO_USERNAME = "plotree"
 KOBO_PASSWORD = "Pl@tr33@123"
-FORM_UID        = "aJHsRZXT3XEpCoxn9Ct3qZ"
-BASE_URL        = "https://kf.kobotoolbox.org"
-API_URL         = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
+FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
+BASE_URL = "https://kf.kobotoolbox.org"
+EXPORT_ENDPOINT = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
 
-# ==============================================
-# DATA FUNCTIONS
-# ==============================================
+# ================================
+# UI LAYOUT
+# ================================
 
-@st.cache_data(ttl=3600)
-def fetch_kobo_data():
-    try:
-        resp = requests.get(API_URL, auth=HTTPBasicAuth(KOBO_USERNAME, KOBO_PASSWORD))
-        resp.raise_for_status()
-        return pd.DataFrame(resp.json().get("results", []))
-    except Exception as e:
-        st.error(f"Error loading data: {e}")
-        return pd.DataFrame()
+st.set_page_config(page_title="Kobo Export Options", layout="centered")
+st.title("📤 KoboToolbox Custom Export")
+st.markdown("Configure your export and download data from KoboToolbox.")
 
-# ==============================================
-# LOAD + CLEAN DATA
-# ==============================================
+# Export configuration options
+st.subheader("⚙️ Export Settings")
 
-df = fetch_kobo_data()
-if df.empty:
-    st.warning("No data available – check your connection or credentials.")
-    st.stop()
-
-# (Optional) rename for readability
-col_mapping = {
-    "username": "username",
-    "_1_1_Name_of_the_City_": "district",
-    "_geolocation_latitude": "latitude",
-    "_geolocation_longitude": "longitude"
-}
-df.rename(columns={k: v for k, v in col_mapping.items() if k in df.columns}, inplace=True)
-
-# submission date
-if "_submission_time" in df.columns:
-    df["submission_date"] = pd.to_datetime(df["_submission_time"]).dt.tz_localize(None)
-    df["submission_day"] = df["submission_date"].dt.date
-
-# ==============================================
-# REORDER COLUMNS TO MATCH YOUR KOBO FORM
-# ==============================================
-
-# 🔑 Fill this list with your exact Kobo question fields in the order they appear on your form:
-field_order = [
-    "_submission_time",
-    "username",
-    "_1_1_Name_of_the_City_",
-    "district",
-    "latitude",
-    "longitude",
-    # ... add your other question keys here, in form‐sequence
-]
-
-# Keep only those that exist, then append any extras at the end
-ordered = [c for c in field_order if c in df.columns]
-others  = [c for c in df.columns if c not in ordered]
-df = df[ordered + others]
-
-# ==============================================
-# SIDEBAR FILTERS
-# ==============================================
-
-st.sidebar.title("🔍 Filters")
-
-# Date range
-if "submission_date" in df.columns:
-    with st.sidebar.expander("📅 Date Range", expanded=True):
-        mn, mx = df["submission_date"].dt.date.min(), df["submission_date"].dt.date.max()
-        dr = st.date_input("Select range", (mn, mx), min_value=mn, max_value=mx)
-        if len(dr) == 2:
-            df = df[(df["submission_date"].dt.date >= dr[0]) & (df["submission_date"].dt.date <= dr[1])]
-
-# District
-with st.sidebar.expander("📍 District", expanded=True):
-    if "district" in df.columns:
-        opts = ["All"] + sorted(df["district"].dropna().unique().tolist())
-        sel  = st.selectbox("District", opts)
-        if sel != "All":
-            df = df[df["district"] == sel]
-
-# Collector
-if "username" in df.columns:
-    with st.sidebar.expander("👤 Collector", expanded=True):
-        users = ["All"] + sorted(df["username"].dropna().unique().tolist())
-        sel   = st.selectbox("Collector", users)
-        if sel != "All":
-            df = df[df["username"] == sel]
-
-# ==============================================
-# MAIN DASHBOARD
-# ==============================================
-
-st.title("📊 KoboToolbox Dashboard")
-st.subheader("📈 Key Metrics")
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Total Subs", len(df))
-if "submission_date" in df.columns:
-    today = datetime.now().date()
-    c2.metric("Today's Subs", len(df[df["submission_date"].dt.date == today]))
-if "username" in df.columns:
-    c3.metric("Unique Collectors", df["username"].nunique())
-c4.metric("Completeness", f"{round((1 - df.isnull().mean().mean())*100,1)}%")
-
-# ==============================================
-# INTERACTIVE TABLE WITH FULL-HEIGHT & EXPORT
-# ==============================================
-
-st.subheader("🔍 Data Table (Right-click to export CSV/XLSX)")
-
-# Configure AgGrid
-gb = GridOptionsBuilder.from_dataframe(df)
-gb.configure_default_column(filter=True, sortable=True, resizable=True)
-gb.configure_side_bar()  
-gb.configure_grid_options(
-    enableRangeSelection=True,
-    domLayout='autoHeight',          # auto-expand height
-    rowSelection='multiple',
-    pagination=True,
-    paginationPageSize=25,
-    suppressExcelExport=False
+export_type = st.selectbox("Export Format", ["xls", "csv", "json"])
+lang = st.selectbox("Language for Labels", ["english", "urdu", "xml"])
+group_sep = st.selectbox("Group Separator", ["/", "."])
+include_media = st.checkbox("Include Media URLs", value=True)
+select_multiples = st.radio(
+    "Select Multiple Questions As",
+    ["separate columns", "single column"]
 )
-# Right-click menu
-gb.configure_grid_options(
-    getContextMenuItems=JsCode("""
-    function(params) {
-      return ['copy','copyWithHeaders','separator','export'];
+hierarchy_labels = st.checkbox("Include Groups in Headers", value=True)
+store_text = st.checkbox("Store Dates & Numbers as Text", value=False)
+
+# Submit export request
+if st.button("🚀 Generate Export"):
+    st.info("Sending export request to KoboToolbox...")
+
+    payload = {
+        "type": export_type,
+        "lang": lang,
+        "group_sep": group_sep,
+        "include_media_urls": include_media,
+        "hierarchy_in_labels": hierarchy_labels,
+        "select_multiples": select_multiples,
+        "value_select_multiples": select_multiples,
+        "store_empty_columns": True,
+        "store_dates_as_text": store_text,
+        "store_numbers_as_text": store_text
     }
-    """)
-)
-grid_opts = gb.build()
 
-# Render
-AgGrid(
-    df,
-    gridOptions=grid_opts,
-    update_mode=GridUpdateMode.NO_UPDATE,
-    allow_unsafe_jscode=True,
-    enable_enterprise_modules=True,
-    theme="alpine",
-    height=600,        # force a minimum height
-    width='100%'
-)
+    response = requests.post(
+        EXPORT_ENDPOINT,
+        auth=HTTPBasicAuth(KOBO_USERNAME, KOBO_PASSWORD),
+        json=payload
+    )
 
-st.success("✅ Dashboard ready – just right-click any cell/row to export!")
+    if response.status_code == 201:
+        export_url = response.json()["url"]
+        st.success("Export started. Waiting for completion...")
+
+        progress = st.progress(0)
+        status_text = st.empty()
+
+        for i in range(30):  # Max ~5 minutes
+            export_status = requests.get(export_url, auth=HTTPBasicAuth(KOBO_USERNAME, KOBO_PASSWORD))
+            if export_status.status_code == 200:
+                status_json = export_status.json()
+                status = status_json.get("status")
+                result_url = status_json.get("result")
+
+                if status == "complete" and result_url:
+                    download_link = BASE_URL + result_url
+                    progress.progress(100)
+                    status_text.success("✅ Export complete!")
+                    st.markdown(
+                        f'<a href="{download_link}" target="_blank">📥 Click here to download your {export_type.upper()} file</a>',
+                        unsafe_allow_html=True
+                    )
+                    break
+                elif status == "failed":
+                    status_text.error("❌ Export failed.")
+                    break
+                else:
+                    progress.progress((i + 1) * 3)
+                    status_text.info(f"Status: {status}. Please wait...")
+                    time.sleep(10)
+            else:
+                st.error("Failed to check export status.")
+                break
+
+        else:
+            status_text.warning("⏳ Export taking too long. Check KoboToolbox later.")
+    else:
+        st.error(f"Failed to start export: {response.status_code}")
