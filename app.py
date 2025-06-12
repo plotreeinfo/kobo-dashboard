@@ -21,20 +21,22 @@ header {visibility: hidden;}
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # KoboToolbox API configuration
-KOBO_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"  # Replace with your actual token
 FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
 BASE_URL = "https://kf.kobotoolbox.org"
 API_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
 EXPORT_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
+
+# ⚠️ Replace this with your actual Kobo API Token
+KOBO_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
 
 # ==============================================
 # FUNCTIONS
 # ==============================================
 
 @st.cache_data(ttl=3600)
-def fetch_kobo_data():
+def fetch_kobo_data(token):
     try:
-        headers = {'Authorization': f'Token {KOBO_TOKEN}'}
+        headers = {'Authorization': f'Token {token}'}
         response = requests.get(API_URL, headers=headers)
         response.raise_for_status()
         data = response.json().get("results", [])
@@ -60,8 +62,8 @@ def convert_media_links(df):
             df[col] = df[col].apply(lambda x: f"[View]({x})" if isinstance(x, str) and x.startswith("http") else x)
     return df
 
-def trigger_kobo_export(export_type="xls", lang="English", select_multiple_format="separate", format_option="xml", include_media=True, group_sep="/", field_as_text=True):
-    headers = {'Authorization': f'Token {KOBO_TOKEN}'}
+def trigger_kobo_export(token, export_type="xls", lang="English", select_multiple_format="separate", format_option="xml", include_media=True, group_sep="/", field_as_text=True):
+    headers = {'Authorization': f'Token {token}'}
     payload = {
         "type": export_type,
         "fields_from_all_versions": "true",
@@ -81,8 +83,8 @@ def trigger_kobo_export(export_type="xls", lang="English", select_multiple_forma
         st.error(f"Export request failed: {response.status_code} - {response.text}")
         return None
 
-def check_export_status(export_url):
-    headers = {'Authorization': f'Token {KOBO_TOKEN}'}
+def check_export_status(token, export_url):
+    headers = {'Authorization': f'Token {token}'}
     response = requests.get(export_url, headers=headers)
     if response.status_code == 200:
         return response.json().get('status'), response.json().get('result')
@@ -107,7 +109,7 @@ with st.sidebar:
 
 # Fetch Data
 st.subheader("🔍 Data Table (Live from KoboToolbox)")
-df = fetch_kobo_data()
+df = fetch_kobo_data(KOBO_TOKEN)
 
 if df.empty:
     st.warning("No data available - please check your connection or API token.")
@@ -126,6 +128,7 @@ st.subheader("📥 KoboToolbox Export")
 if st.button("🔁 Generate Export with Options"):
     with st.spinner("Requesting export from KoboToolbox..."):
         export_url = trigger_kobo_export(
+            KOBO_TOKEN,
             export_type=export_type,
             lang=language,
             select_multiple_format=select_multiple_format,
@@ -141,7 +144,7 @@ if st.button("🔁 Generate Export with Options"):
             status_text = st.empty()
 
             for i in range(30):
-                status, result_url = check_export_status(export_url)
+                status, result_url = check_export_status(KOBO_TOKEN, export_url)
                 if status == "complete":
                     status_bar.progress(100)
                     status_text.success("✅ Export ready!")
