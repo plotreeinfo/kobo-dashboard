@@ -67,13 +67,14 @@ def trigger_kobo_export(token, export_type="xls", lang="English", select_multipl
         "type": export_type,
         "lang": lang,
         "group_sep": group_sep,
-        "include_labels": format_option == "labels",
-        "value_select_multiples": select_multiple_format,
         "include_media_urls": include_media,
         "xls_field_as_text": field_as_text,
-        "hierarchy_in_labels": True
+        "value_select_multiples": select_multiple_format,
+        "include_labels": format_option == "labels"
     }
+
     response = requests.post(EXPORT_URL, headers=headers, json=payload)
+
     if response.status_code == 201:
         return response.json().get('url')
     else:
