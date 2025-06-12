@@ -34,7 +34,7 @@ EXPORT_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
 @st.cache_data(ttl=3600)
 def fetch_kobo_data():
     try:
-        headers = {'Authorization': f'Token {04714621fa3d605ff0a4aa5cc2df7cfa961bf256}'}
+        headers = {'Authorization': f'Token {"04714621fa3d605ff0a4aa5cc2df7cfa961bf256"}'}
         response = requests.get(API_URL, headers=headers)
         response.raise_for_status()
         data = response.json().get("results", [])
