@@ -26,8 +26,8 @@ BASE_URL = "https://kf.kobotoolbox.org"
 API_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
 EXPORT_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
 
-# ⚠️ Replace this with your actual Kobo API Token
-KOBO_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"  # Replace this with your real token
+# ✅ Your Kobo API Token
+KOBO_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
 
 # ==============================================
 # FUNCTIONS
@@ -46,7 +46,6 @@ def fetch_kobo_data(token):
         return pd.DataFrame()
 
 def clean_kobo_dataframe(df):
-    # Drop metadata columns (those starting with '_')
     return df[[col for col in df.columns if not col.startswith('_')]]
 
 def reorder_columns(df, priority_cols=None):
