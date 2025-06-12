@@ -1,99 +1,143 @@
 import streamlit as st
+import pandas as pd
 import requests
 import time
 from datetime import datetime
 from requests.auth import HTTPBasicAuth
+import io
 
-# ================================
+# ============================================================
 # CONFIGURATION
-# ================================
-
+# ============================================================
 KOBO_USERNAME = "plotree"
 KOBO_PASSWORD = "Pl@tr33@123"
 FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
 BASE_URL = "https://kf.kobotoolbox.org"
-EXPORT_ENDPOINT = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
+DATA_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
+EXPORT_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
 
-# ================================
-# UI LAYOUT
-# ================================
+# ============================================================
+# HIDE STREAMLIT MENU
+# ============================================================
+st.markdown("""
+<style>
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+</style>
+""", unsafe_allow_html=True)
 
-st.set_page_config(page_title="Kobo Export Options", layout="centered")
-st.title("📤 KoboToolbox Custom Export")
-st.markdown("Configure your export and download data from KoboToolbox.")
+st.title("📊 KoboToolbox Data Dashboard + Export")
 
-# Export configuration options
-st.subheader("⚙️ Export Settings")
+# ============================================================
+# DATA LOADING
+# ============================================================
+@st.cache_data(ttl=3600)
+def fetch_kobo_data():
+    try:
+        res = requests.get(DATA_URL, auth=HTTPBasicAuth(KOBO_USERNAME, KOBO_PASSWORD))
+        res.raise_for_status()
+        records = res.json().get("results", [])
+        return pd.DataFrame(records)
+    except Exception as e:
+        st.error(f"Error fetching data: {e}")
+        return pd.DataFrame()
 
-export_type = st.selectbox("Export Format", ["xls", "csv", "json"])
-lang = st.selectbox("Language for Labels", ["english", "urdu", "xml"])
-group_sep = st.selectbox("Group Separator", ["/", "."])
-include_media = st.checkbox("Include Media URLs", value=True)
-select_multiples = st.radio(
-    "Select Multiple Questions As",
-    ["separate columns", "single column"]
-)
-hierarchy_labels = st.checkbox("Include Groups in Headers", value=True)
-store_text = st.checkbox("Store Dates & Numbers as Text", value=False)
+df = fetch_kobo_data()
 
-# Submit export request
-if st.button("🚀 Generate Export"):
-    st.info("Sending export request to KoboToolbox...")
+if df.empty:
+    st.warning("No data found.")
+    st.stop()
 
-    payload = {
-        "type": export_type,
-        "lang": lang,
-        "group_sep": group_sep,
-        "include_media_urls": include_media,
-        "hierarchy_in_labels": hierarchy_labels,
-        "select_multiples": select_multiples,
-        "value_select_multiples": select_multiples,
-        "store_empty_columns": True,
-        "store_dates_as_text": store_text,
-        "store_numbers_as_text": store_text
-    }
+# Standardize columns
+if "_submission_time" in df.columns:
+    df["submission_date"] = pd.to_datetime(df["_submission_time"])
+    df["submission_day"] = df["submission_date"].dt.date
 
-    response = requests.post(
-        EXPORT_ENDPOINT,
-        auth=HTTPBasicAuth(KOBO_USERNAME, KOBO_PASSWORD),
-        json=payload
-    )
+# ============================================================
+# SIDEBAR FILTERS
+# ============================================================
+st.sidebar.title("🔍 Filters")
 
-    if response.status_code == 201:
-        export_url = response.json()["url"]
-        st.success("Export started. Waiting for completion...")
+if "submission_date" in df.columns:
+    with st.sidebar.expander("📅 Date Range"):
+        min_date = df["submission_date"].min().date()
+        max_date = df["submission_date"].max().date()
+        selected_range = st.date_input("Date range", (min_date, max_date))
+        if len(selected_range) == 2:
+            df = df[(df["submission_date"].dt.date >= selected_range[0]) &
+                    (df["submission_date"].dt.date <= selected_range[1])]
 
-        progress = st.progress(0)
-        status_text = st.empty()
+if "username" in df.columns:
+    with st.sidebar.expander("👤 Collectors"):
+        users = ['All'] + sorted(df['username'].dropna().unique())
+        user_choice = st.selectbox("Select User", users)
+        if user_choice != 'All':
+            df = df[df['username'] == user_choice]
 
-        for i in range(30):  # Max ~5 minutes
-            export_status = requests.get(export_url, auth=HTTPBasicAuth(KOBO_USERNAME, KOBO_PASSWORD))
-            if export_status.status_code == 200:
-                status_json = export_status.json()
-                status = status_json.get("status")
-                result_url = status_json.get("result")
+if "_1_1_Name_of_the_City_" in df.columns:
+    with st.sidebar.expander("📍 District"):
+        dists = ['All'] + sorted(df['_1_1_Name_of_the_City_'].dropna().unique())
+        dist_choice = st.selectbox("Select District", dists)
+        if dist_choice != 'All':
+            df = df[df['_1_1_Name_of_the_City_'] == dist_choice]
 
-                if status == "complete" and result_url:
-                    download_link = BASE_URL + result_url
-                    progress.progress(100)
-                    status_text.success("✅ Export complete!")
-                    st.markdown(
-                        f'<a href="{download_link}" target="_blank">📥 Click here to download your {export_type.upper()} file</a>',
-                        unsafe_allow_html=True
-                    )
-                    break
-                elif status == "failed":
-                    status_text.error("❌ Export failed.")
-                    break
-                else:
-                    progress.progress((i + 1) * 3)
-                    status_text.info(f"Status: {status}. Please wait...")
-                    time.sleep(10)
+# ============================================================
+# DATA TABLE
+# ============================================================
+st.subheader("🔍 Data Table (Right-click to Export)")
+st.dataframe(df, use_container_width=True)
+
+# ============================================================
+# EXPORT CONFIG
+# ============================================================
+st.subheader("📤 KoboToolbox Export Options")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    export_type = st.selectbox("Export Type", ["xls", "csv", "json"])
+    lang = st.selectbox("Labels Language", ["English", "Urdu", "XML"])
+    group_sep = st.text_input("Group Separator", "/")
+    select_multiples = st.radio("Select-Multiple Format", ["separate_columns", "single_column"])
+
+with col2:
+    hierarchy = st.checkbox("Hierarchy in labels", value=True)
+    media_urls = st.checkbox("Include media URLs", value=True)
+    store_as_text = st.checkbox("Store dates/numbers as text", value=False)
+
+# Request export
+if st.button("🚀 Request Export"):
+    with st.spinner("Contacting KoboToolbox..."):
+        headers = {'Authorization': f'Token {KOBO_PASSWORD}'}
+        payload = {
+            "type": export_type,
+            "lang": lang,
+            "group_sep": group_sep,
+            "select_multiples": select_multiples,
+            "hierarchy_in_labels": hierarchy,
+            "include_media_urls": media_urls,
+            "store_formatted_date_and_number": store_as_text
+        }
+        res = requests.post(EXPORT_URL, headers=headers, json=payload)
+        if res.status_code == 201:
+            export_url = res.json().get("url")
+            st.success("Export initiated. Waiting for completion...")
+            for i in range(30):
+                status_check = requests.get(export_url, headers=headers)
+                if status_check.status_code == 200:
+                    status = status_check.json().get("status")
+                    if status == "complete":
+                        result_url = status_check.json().get("result")
+                        st.markdown(f"✅ [Download Export File]({BASE_URL}{result_url})")
+                        break
+                    elif status == "error":
+                        st.error("Export failed.")
+                        break
+                time.sleep(5)
             else:
-                st.error("Failed to check export status.")
-                break
-
+                st.warning("Export is still processing. Please try again later.")
         else:
-            status_text.warning("⏳ Export taking too long. Check KoboToolbox later.")
-    else:
-        st.error(f"Failed to start export: {response.status_code}")
+            st.error("Export request failed.")
+
+st.success("✅ Dashboard Ready")
