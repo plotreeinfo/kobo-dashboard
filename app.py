@@ -27,7 +27,7 @@ API_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
 EXPORT_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
 
 # ⚠️ Replace this with your actual Kobo API Token
-KOBO_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
+KOBO_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"  # Replace this with your real token
 
 # ==============================================
 # FUNCTIONS
@@ -36,7 +36,7 @@ KOBO_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
 @st.cache_data(ttl=3600)
 def fetch_kobo_data(token):
     try:
-        headers = {'Authorization': f'Token {token}'}
+        headers = {'Authorization': token}
         response = requests.get(API_URL, headers=headers)
         response.raise_for_status()
         data = response.json().get("results", [])
@@ -63,18 +63,16 @@ def convert_media_links(df):
     return df
 
 def trigger_kobo_export(token, export_type="xls", lang="English", select_multiple_format="separate", format_option="xml", include_media=True, group_sep="/", field_as_text=True):
-    headers = {'Authorization': f'Token {token}'}
+    headers = {'Authorization': token}
     payload = {
         "type": export_type,
-        "fields_from_all_versions": "true",
-        "group_sep": group_sep,
-        "hierarchy_in_labels": "true",
-        "include_media_urls": include_media,
         "lang": lang,
+        "group_sep": group_sep,
+        "include_labels": format_option == "labels",
         "value_select_multiples": select_multiple_format,
-        "format": format_option,
+        "include_media_urls": include_media,
         "xls_field_as_text": field_as_text,
-        "include_labels": True
+        "hierarchy_in_labels": True
     }
     response = requests.post(EXPORT_URL, headers=headers, json=payload)
     if response.status_code == 201:
@@ -84,7 +82,7 @@ def trigger_kobo_export(token, export_type="xls", lang="English", select_multipl
         return None
 
 def check_export_status(token, export_url):
-    headers = {'Authorization': f'Token {token}'}
+    headers = {'Authorization': token}
     response = requests.get(export_url, headers=headers)
     if response.status_code == 200:
         return response.json().get('status'), response.json().get('result')
