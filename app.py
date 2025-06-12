@@ -27,7 +27,7 @@ API_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
 EXPORT_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
 
 # ✅ Your Kobo API Token (Replace this with your actual token)
-KOBO_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
+KOBO_TOKEN = "Token 9bff17aafbb2c2e0f6fc8ac18a8d7c1d5e134df1"
 
 # ==============================================
 # FUNCTIONS
@@ -63,15 +63,18 @@ def convert_media_links(df):
 
 def trigger_kobo_export(token, export_type="xls", lang="English", select_multiple_format="separate", format_option="xml", include_media=True, group_sep="/", field_as_text=True):
     headers = {'Authorization': token}
+
     payload = {
         "type": export_type,
-        "lang": lang,
         "group_sep": group_sep,
-        "include_media_urls": include_media,
-        "xls_field_as_text": field_as_text,
-        "value_select_multiples": select_multiple_format,
-        "include_labels": format_option == "labels"
+        "include_media": include_media,
+        "xls_fields_as_text": field_as_text,
+        "select_multiples": select_multiple_format,
+        "hierarchical_labels": (format_option == "labels")
     }
+
+    if lang and lang.lower() != "xml":
+        payload["lang"] = lang.lower()
 
     response = requests.post(EXPORT_URL, headers=headers, json=payload)
 
@@ -98,7 +101,9 @@ st.title("📊 KoboToolbox Dashboard")
 with st.sidebar:
     st.header("⚙️ Export Options")
     export_type = st.selectbox("Export Type", ["xls", "csv"])
-    language = st.selectbox("Language", ["English", "Urdu", "XML"])
+    language = st.selectbox("Language", ["English", "Urdu", "None (for XML)"])
+    if language == "None (for XML)":
+        language = None
     format_option = st.selectbox("Header Format", ["xml", "labels"])
     select_multiple_format = st.radio("Select-Many Columns", ["separate", "single"])
     include_media = st.checkbox("Include Media URLs", value=True)
