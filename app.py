@@ -61,26 +61,30 @@ def convert_media_links(df):
             df[col] = df[col].apply(lambda x: f"[View]({x})" if isinstance(x, str) and x.startswith("http") else x)
     return df
 
-def trigger_kobo_export(token, export_type="xls", lang="English", select_multiple_format="separate", format_option="xml", include_media=True, group_sep="/", field_as_text=True):
-    headers = {'Authorization': token}
+def trigger_kobo_export(token, export_type="xls", lang="English", select_multiple_format="separate", format_option="labels", include_media=True, group_sep="/", field_as_text=True):
+    headers = {"Authorization": token}
 
     payload = {
         "type": export_type,
-        "group_sep": group_sep,
+        "select_multiples": select_multiple_format,
         "include_media": include_media,
         "xls_fields_as_text": field_as_text,
-        "select_multiples": select_multiple_format,
+        "group_sep": group_sep,
         "hierarchical_labels": (format_option == "labels")
     }
 
-    if lang and lang.lower() != "xml":
+    if lang:
         payload["lang"] = lang.lower()
 
-    response = requests.post(EXPORT_URL, headers=headers, json=payload)
+    payload = {k: v for k, v in payload.items() if v is not None}
 
-    if response.status_code == 201:
-        return response.json().get('url')
-    else:
+    st.code(f"Payload being sent:\n{payload}", language="json")  # Logging payload to debug
+
+    try:
+        response = requests.post(EXPORT_URL, headers=headers, json=payload)
+        response.raise_for_status()
+        return response.json().get("url")
+    except requests.exceptions.RequestException as e:
         st.error(f"Export request failed: {response.status_code} - {response.text}")
         return None
 
@@ -101,11 +105,11 @@ st.title("📊 KoboToolbox Dashboard")
 with st.sidebar:
     st.header("⚙️ Export Options")
     export_type = st.selectbox("Export Type", ["xls", "csv"])
-    language = st.selectbox("Language", ["English", "Urdu", "None (for XML)"])
-    if language == "None (for XML)":
+    language = st.selectbox("Language", ["English", "Urdu", "None"])
+    if language == "None":
         language = None
     format_option = st.selectbox("Header Format", ["xml", "labels"])
-    select_multiple_format = st.radio("Select-Many Columns", ["separate", "single"])
+    select_multiple_format = st.radio("Select-Many Columns", ["separate", "compact"])
     include_media = st.checkbox("Include Media URLs", value=True)
     field_as_text = st.checkbox("Store Numbers as Text", value=True)
     group_sep = st.text_input("Group Separator", value="/")
