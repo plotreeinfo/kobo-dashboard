@@ -3,4 +3,4 @@ pandas
 requests
 openpyxl
 streamlit-aggrid
-plotly.express as px
+plotly.express
