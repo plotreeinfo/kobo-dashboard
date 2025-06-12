@@ -73,20 +73,17 @@ def trigger_kobo_export(token, export_type="xls", lang="English", select_multipl
         "hierarchical_labels": (format_option == "labels")
     }
 
-    lang_clean = lang.lower() if lang and lang.lower() != "none" else None
-    if lang_clean:
-        payload["lang"] = lang_clean
-
-    payload = {k: v for k, v in payload.items() if v is not None}
-
-    st.code(f"Payload being sent:\n{payload}", language="json")  # Logging payload to debug
+    if lang and lang.lower() not in ["none", ""]:
+        payload["lang"] = lang.lower()
 
     try:
         response = requests.post(EXPORT_URL, headers=headers, json=payload)
-        response.raise_for_status()
+        if response.status_code != 200:
+            st.error(f"Export request failed: {response.status_code} - {response.text}")
+            return None
         return response.json().get("url")
     except requests.exceptions.RequestException as e:
-        st.error(f"Export request failed: {response.status_code} - {response.text}")
+        st.error(f"Request error: {str(e)}")
         return None
 
 def check_export_status(token, export_url):
@@ -107,8 +104,6 @@ with st.sidebar:
     st.header("⚙️ Export Options")
     export_type = st.selectbox("Export Type", ["xls", "csv"])
     language = st.selectbox("Language", ["English", "Urdu", "None"])
-    if language == "None":
-        language = None
     format_option = st.selectbox("Header Format", ["xml", "labels"])
     select_multiple_format = st.radio("Select-Many Columns", ["separate", "compact"])
     include_media = st.checkbox("Include Media URLs", value=True)
