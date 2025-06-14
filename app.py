@@ -17,7 +17,7 @@ KOBO_API_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
 FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
 
 # API endpoints - using kobotoolbox.org instead of kf.kobotoolbox.org
-KOBO_API_URL = "https://kobo.humanitarianresponse.info/api/v2"
+KOBO_API_URL = "https://kf.kobotoolbox.org/api/v2"
 ASSET_URL = f"{KOBO_API_URL}/assets/{FORM_UID}"
 DATA_URL = f"{KOBO_API_URL}/assets/{FORM_UID}/data/"
 
