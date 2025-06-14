@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
-import plotly.express
 import requests
-import io
 import time
 from datetime import datetime
 from requests.auth import HTTPBasicAuth
@@ -68,23 +66,6 @@ def check_export_status(export_url):
     if response.status_code == 200:
         return response.json().get('status'), response.json().get('result')
     return None, None
-
-def prepare_kobo_style_export(df):
-    """Format our data to match KoboToolbox export structure"""
-    # Define system columns in Kobo's order
-    system_columns = [
-        '_id', '_uuid', '_submission_time', '_validation_status',
-        '_notes', '_status', '_submitted_by', '_tags', '_index', '__version__'
-    ]
-    
-    # Get existing system columns
-    existing_system_cols = [col for col in system_columns if col in df.columns]
-    
-    # Get other columns (non-system)
-    other_cols = [col for col in df.columns if col not in system_columns]
-    
-    # Reorder columns: system first, then others
-    return df[existing_system_cols + other_cols]
 
 # ==============================================
 # DASHBOARD LAYOUT
@@ -197,39 +178,65 @@ st.subheader("🔍 Data Preview")
 st.dataframe(df.head(1000), use_container_width=True)
 
 # ==============================================
-# DATA EXPORT SECTION
+# KOBOTOOLBOX EXPORT SECTION
 # ==============================================
 
 st.subheader("📥 Download Data")
 
-# Option 1: Direct Kobo Export
-st.markdown("### 1. Official KoboToolbox Export")
-st.write("Get data in exact KoboToolbox format (may take 1-2 minutes)")
+# Export Format Selection
+export_format = st.radio(
+    "Select export format",
+    ["Excel (XLS)", "CSV"],
+    horizontal=True
+)
 
+# Export Options
+with st.expander("Export Options", expanded=True):
+    st.markdown("""
+    **KoboToolbox Standard Export Features:**
+    - Includes all media URLs
+    - Preserves original question groups
+    - Maintains proper column ordering
+    - Contains all submission metadata
+    """)
+    
+    if st.checkbox("Include rejected submissions", value=True):
+        include_rejected = "true"
+    else:
+        include_rejected = "false"
+
+# Export Button
 if st.button("Generate KoboToolbox Export"):
     with st.spinner("Requesting export from KoboToolbox..."):
-        export_url = trigger_kobo_export()
+        # Determine export type
+        export_type = "xls" if export_format == "Excel (XLS)" else "csv"
+        
+        # Trigger export
+        export_url = trigger_kobo_export(export_type)
         
         if export_url:
             st.session_state.export_url = export_url
             st.success("Export requested! Checking status...")
             
+            # Create progress elements
             status_bar = st.progress(0)
             status_text = st.empty()
+            download_placeholder = st.empty()
             
+            # Check status periodically
             for i in range(30):  # Check for up to 5 minutes
                 status, result_url = check_export_status(export_url)
                 
                 if status == "complete":
                     status_bar.progress(100)
                     status_text.success("Export ready!")
-                    st.markdown(
-                        f'<a href="{BASE_URL}{result_url}" download>Download XLS Export</a>',
+                    download_placeholder.markdown(
+                        f'<a href="{BASE_URL}{result_url}" download>Download {export_format} Export</a>',
                         unsafe_allow_html=True
                     )
                     break
                 elif status == "error":
-                    status_text.error("Export failed")
+                    status_text.error("Export failed - please try again")
                     break
                 else:
                     status_bar.progress((i + 1) * 3)
@@ -237,43 +244,6 @@ if st.button("Generate KoboToolbox Export"):
                     time.sleep(10)
             else:
                 status_text.warning("Export taking longer than expected. Please check KoboToolbox later.")
-
-# Option 2: Formatted Export
-st.markdown("### 2. Formatted Export")
-st.write("Faster download with similar structure to Kobo")
-
-# Prepare Kobo-style export
-export_df = prepare_kobo_style_export(df)
-
-# CSV Download
-csv = export_df.to_csv(index=False).encode('utf-8')
-st.download_button(
-    "Download CSV (Kobo-style)",
-    csv,
-    "kobo_export.csv",
-    "text/csv",
-    help="CSV with Kobo-like column ordering"
-)
-
-# Excel Download
-excel_io = io.BytesIO()
-with pd.ExcelWriter(excel_io, engine='openpyxl') as writer:
-    # Main data sheet
-    export_df.to_excel(writer, sheet_name='data', index=False)
-    
-    # Media URLs sheet
-    media_cols = [col for col in export_df.columns if any(x in col.lower() for x in ['url', 'image', 'photo'])]
-    if media_cols:
-        media_df = export_df[media_cols]
-        media_df.to_excel(writer, sheet_name='media_urls', index=False)
-
-st.download_button(
-    "Download Excel (Kobo-style)",
-    excel_io.getvalue(),
-    "kobo_export.xlsx",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    help="Excel with Kobo-like structure"
-)
 
 # ==============================================
 # VISUALIZATIONS
@@ -339,32 +309,6 @@ if "submission_date" in df.columns:
 else:
     st.warning("Submission date information not available in this dataset")
 
-# Additional Analysis
-st.markdown("### Data Distribution")
-
-# Select a column to analyze
-analysis_col = st.selectbox(
-    "Select column to analyze",
-    [col for col in df.columns if col not in ['submission_date', 'username']]
-)
-
-if analysis_col:
-    try:
-        if pd.api.types.is_numeric_dtype(df[analysis_col]):
-            # Histogram for numeric data
-            fig = px.histogram(df, x=analysis_col, 
-                             title=f"Distribution of {analysis_col}")
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            # Bar chart for categorical data
-            value_counts = df[analysis_col].value_counts().reset_index()
-            value_counts.columns = [analysis_col, 'count']
-            fig = px.bar(value_counts, x=analysis_col, y='count',
-                        title=f"Distribution of {analysis_col}")
-            st.plotly_chart(fig, use_container_width=True)
-    except Exception as e:
-        st.error(f"Could not visualize {analysis_col}: {str(e)}")
-
 # ==============================================
 # FOOTER
 # ==============================================
@@ -374,9 +318,9 @@ st.markdown("""
 **Dashboard Features:**
 - Real-time data from KoboToolbox
 - Professional filtering options
-- Two export formats (official Kobo and formatted)
+- Official KoboToolbox export functionality
 - Interactive visualizations
 - Data quality indicators
 """)
 
-st.success("✅ Dashboard ready with all requested functionality")
+st.success("✅ Dashboard ready with official KoboToolbox export functionality")
