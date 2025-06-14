@@ -20,15 +20,36 @@ header {visibility: hidden;}
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# KoboToolbox API credentials - MUST CONFIGURE THESE
-KOBO_USERNAME = "plotree"  # Replace with your username
-KOBO_PASSWORD = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"  # Replace with your API token (not password)
-FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"  # Replace with your form's asset UID
-BASE_URL = "https://kf.kobotoolbox.org"  # Replace if using a different server
+# KoboToolbox API credentials - MUST UPDATE THESE
+KOBO_USERNAME = "plotree"  # Replace with your actual username
+KOBO_API_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"  # Get this from KoboToolbox account settings
+FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"  # Find in form URL (after /assets/)
+BASE_URL = "https://kf.kobotoolbox.org"  # Replace if using different server
 
 # API endpoints
 API_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
 EXPORT_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
+
+# ==============================================
+# AUTHENTICATION VERIFICATION
+# ==============================================
+
+def verify_credentials():
+    """Verify if credentials are valid before proceeding"""
+    try:
+        test_url = f"{BASE_URL}/api/v2/assets/"
+        response = requests.get(
+            test_url,
+            auth=HTTPBasicAuth(KOBO_USERNAME, KOBO_API_TOKEN),
+            timeout=10
+        )
+        if response.status_code == 200:
+            return True
+        st.error(f"Authentication failed (HTTP {response.status_code})")
+        return False
+    except Exception as e:
+        st.error(f"Connection error: {str(e)}")
+        return False
 
 # ==============================================
 # DATA FUNCTIONS
@@ -36,35 +57,51 @@ EXPORT_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
 
 @st.cache_data(ttl=3600)
 def fetch_kobo_data():
-    """Fetch raw data from KoboToolbox API with enhanced error handling"""
+    """Fetch data from KoboToolbox API with proper error handling"""
+    if not verify_credentials():
+        st.stop()
+    
     try:
         response = requests.get(
             API_URL,
-            auth=HTTPBasicAuth(KOBO_USERNAME, KOBO_PASSWORD),
+            auth=HTTPBasicAuth(KOBO_USERNAME, KOBO_API_TOKEN),
             timeout=30
         )
-        response.raise_for_status()
         
+        if response.status_code == 401:
+            st.error("""
+            🔐 Authentication Failed. Please verify:
+            1. Your username is correct
+            2. You're using an API token (from Account Settings → API Tokens)
+            3. The token has proper permissions for this form
+            """)
+            return pd.DataFrame()
+        
+        response.raise_for_status()
         data = response.json().get("results", [])
+        
         if not data:
-            st.warning("API returned empty results - no submissions found")
+            st.warning("No submissions found in this form")
             return pd.DataFrame()
             
         return pd.DataFrame(data)
         
-    except requests.exceptions.RequestException as e:
-        st.error(f"Data fetch failed: {str(e)}")
-        st.info("Troubleshooting steps:")
-        st.info("1. Verify your API token is correct")
-        st.info("2. Check the form UID is accurate")
-        st.info("3. Ensure you have internet access")
+    except Exception as e:
+        st.error(f"Data fetch error: {str(e)}")
         return pd.DataFrame()
+
+# ==============================================
+# EXPORT FUNCTIONS
+# ==============================================
 
 def trigger_kobo_export(export_type="xls"):
     """Trigger a KoboToolbox export with robust error handling"""
+    if not verify_credentials():
+        return None
+        
     try:
         headers = {
-            'Authorization': f'Token {KOBO_PASSWORD}',
+            'Authorization': f'Token {KOBO_API_TOKEN}',
             'Content-Type': 'application/json'
         }
         
@@ -87,27 +124,25 @@ def trigger_kobo_export(export_type="xls"):
         if response.status_code == 201:
             return response.json().get('url')
         else:
-            st.error(f"Export failed with status {response.status_code}")
+            st.error(f"Export failed (Status {response.status_code})")
             if response.status_code == 403:
-                st.error("Permission denied - check your API token has export rights")
+                st.error("Permission denied - verify your token has export rights")
             return None
             
     except Exception as e:
-        st.error(f"Export request failed: {str(e)}")
+        st.error(f"Export request error: {str(e)}")
         return None
 
 def check_export_status(export_url):
-    """Check status of a KoboToolbox export with retry logic"""
+    """Check status of a KoboToolbox export"""
     try:
-        headers = {'Authorization': f'Token {KOBO_PASSWORD}'}
+        headers = {'Authorization': f'Token {KOBO_API_TOKEN}'}
         response = requests.get(export_url, headers=headers, timeout=30)
         
         if response.status_code == 200:
             data = response.json()
             return data.get('status'), data.get('result')
-        else:
-            st.warning(f"Status check failed with code {response.status_code}")
-            return None, None
+        return None, None
             
     except Exception as e:
         st.warning(f"Status check error: {str(e)}")
@@ -116,6 +151,19 @@ def check_export_status(export_url):
 # ==============================================
 # DASHBOARD LAYOUT
 # ==============================================
+
+st.title("📊 KoboToolbox Data Dashboard")
+
+# First verify credentials before loading data
+if not verify_credentials():
+    st.error("""
+    🔒 Cannot connect to KoboToolbox. Please verify:
+    1. Your username and API token are correct
+    2. You have internet access
+    3. The server URL is accurate
+    4. Your account has permission for this form
+    """)
+    st.stop()
 
 # Load data
 df = fetch_kobo_data()
@@ -201,10 +249,8 @@ with st.sidebar.expander("🧰 Data Quality", expanded=True):
             df = df[df[photo_cols].isnull().all(axis=1)]
 
 # ==============================================
-# MAIN DASHBOARD
+# MAIN DASHBOARD DISPLAY
 # ==============================================
-
-st.title("📊 KoboToolbox Data Dashboard")
 
 # Key Metrics
 st.subheader("📈 Overview Metrics")
@@ -224,7 +270,7 @@ st.subheader("🔍 Data Preview")
 st.dataframe(df.head(1000), use_container_width=True)
 
 # ==============================================
-# KOBOTOOLBOX EXPORT SECTION
+# DATA EXPORT SECTION
 # ==============================================
 
 st.subheader("📥 Download Data")
@@ -244,13 +290,10 @@ if 'export_result_url' not in st.session_state:
     st.session_state.export_result_url = None
 if 'export_start_time' not in st.session_state:
     st.session_state.export_start_time = None
-if 'export_retry_count' not in st.session_state:
-    st.session_state.export_retry_count = 0
 
 # Export Button
 if st.button("Generate KoboToolbox Export"):
     st.session_state.export_start_time = time.time()
-    st.session_state.export_retry_count = 0
     st.session_state.export_status = "processing"
     
     with st.spinner("Initiating export..."):
@@ -267,7 +310,7 @@ if st.button("Generate KoboToolbox Export"):
 if st.session_state.export_status == "processing":
     current_time = time.time()
     
-    # Only check status every 15 seconds to avoid rate limiting
+    # Check status every 15 seconds
     if current_time - st.session_state.export_start_time > 15:
         with st.spinner("Checking export status..."):
             status, result_url = check_export_status(st.session_state.export_url)
@@ -277,15 +320,8 @@ if st.session_state.export_status == "processing":
                 st.session_state.export_result_url = result_url
                 st.rerun()
             elif status == "error":
-                st.session_state.export_retry_count += 1
-                if st.session_state.export_retry_count < 3:
-                    st.warning("Temporary issue, retrying...")
-                    st.session_state.export_start_time = current_time
-                    time.sleep(5)
-                    st.rerun()
-                else:
-                    st.session_state.export_status = "error"
-                    st.error("Export failed after multiple attempts")
+                st.session_state.export_status = "error"
+                st.error("Export processing failed")
             else:
                 # Still processing
                 st.session_state.export_start_time = current_time
@@ -293,14 +329,14 @@ if st.session_state.export_status == "processing":
 
 # Show download link when ready
 if st.session_state.export_status == "complete" and st.session_state.export_result_url:
-    st.success("✅ Export ready!")
+    st.success("✅ Export ready for download!")
     st.markdown(
         f"""
         ### Download your {export_format} file:
         [Click here to download]({BASE_URL}{st.session_state.export_result_url})
         """
     )
-    st.info("Note: This link is valid for 24 hours from KoboToolbox")
+    st.info("Note: This download link will expire after 24 hours")
 
 # ==============================================
 # VISUALIZATIONS
@@ -351,6 +387,7 @@ st.markdown("""
 - Professional filtering options
 - Official KoboToolbox export functionality
 - Interactive visualizations
+- Data quality indicators
 """)
 
 st.success("✅ Dashboard ready with all functionality working properly")
