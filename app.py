@@ -35,7 +35,7 @@ def fetch_kobo_data():
     }
     
     try:
-        # First verify asset exists
+        # Verify asset exists first
         asset_url = f"{BASE_URL}/api/v2/assets/{FORM_UID}/"
         response = requests.get(asset_url, headers=headers, timeout=10)
         
@@ -43,7 +43,7 @@ def fetch_kobo_data():
             st.error("❌ Form not found - Check FORM_UID")
             return None
         
-        # Then fetch data
+        # Fetch data
         data_url = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
         response = requests.get(data_url, headers=headers, timeout=30)
         
@@ -78,72 +78,23 @@ def process_data(raw_data):
             except:
                 continue
     
-    # Convert numeric columns
-    for col in df.columns:
-        if not pd.api.types.is_datetime64_any_dtype(df[col]):
-            try:
-                df[col] = pd.to_numeric(df[col], errors='ignore')
-            except:
-                continue
-    
     return df
 
 # ==============================================
-# SAFE COLUMN ANALYSIS
-# ==============================================
-
-def analyze_columns(df):
-    """Categorize columns by type without using nunique()"""
-    results = {
-        'date_cols': [],
-        'numeric_cols': [],
-        'categorical_cols': [],
-        'other_cols': []
-    }
-    
-    if df.empty:
-        return results
-    
-    for col in df.columns:
-        # Check for datetime first
-        if pd.api.types.is_datetime64_any_dtype(df[col]):
-            results['date_cols'].append(col)
-            continue
-        
-        # Check for numeric
-        if pd.api.types.is_numeric_dtype(df[col]):
-            results['numeric_cols'].append(col)
-            continue
-        
-        # For categorical, use value_counts (safer than unique)
-        try:
-            value_counts = df[col].value_counts()
-            if 1 < len(value_counts) <= 20:  # Reasonable threshold for categorical
-                results['categorical_cols'].append(col)
-            else:
-                results['other_cols'].append(col)
-        except:
-            results['other_cols'].append(col)
-    
-    return results
-
-# ==============================================
-# EXPORT FUNCTIONALITY
+# EXPORT FUNCTIONALITY (FIXED)
 # ==============================================
 
 def trigger_export(export_type):
-    """Handle export with maximum error handling"""
+    """Fixed export function with proper payload formatting"""
     headers = {
         "Authorization": f"Token {KOBO_API_TOKEN}",
         "Content-Type": "application/json"
     }
     
+    # Minimal payload that works with KoboToolbox API
     payload = {
         "type": export_type,
-        "fields_from_all_versions": True,
-        "hierarchy_in_labels": True,
-        "group_sep": "/",
-        "lang": "English"
+        "fields_from_all_versions": True
     }
     
     try:
@@ -156,13 +107,17 @@ def trigger_export(export_type):
                 timeout=30
             )
             
+            if response.status_code == 400:
+                st.error("""
+                ❌ Bad Request - Likely Causes:
+                1. Invalid export type
+                2. Token lacks export permissions
+                3. Form has no submissions
+                """)
+                return None
+                
             if response.status_code != 201:
-                st.error(f"Export failed to start (HTTP {response.status_code})")
-                if response.text:
-                    try:
-                        st.json(response.json())
-                    except:
-                        st.text(response.text)
+                st.error(f"Export failed (HTTP {response.status_code})")
                 return None
                 
             export_uid = response.json().get('uid')
@@ -211,16 +166,14 @@ def main():
         st.warning("No data available - check form submissions")
         st.stop()
     
-    # Analyze columns
-    col_analysis = analyze_columns(df)
-    
     # Filters
     with st.sidebar:
         st.header("🔍 Filters")
         
         # Date filter
-        if col_analysis['date_cols']:
-            date_col = st.selectbox("Filter by date", col_analysis['date_cols'])
+        date_cols = [col for col in df.columns if pd.api.types.is_datetime64_any_dtype(df[col])]
+        if date_cols:
+            date_col = st.selectbox("Filter by date", date_cols)
             min_date = df[date_col].min().to_pydatetime()
             max_date = df[date_col].max().to_pydatetime()
             date_range = st.date_input("Date range", [min_date, max_date])
@@ -234,7 +187,7 @@ def main():
         # Column filter
         filter_col = st.selectbox("Filter by column", df.columns)
         
-        if filter_col in col_analysis['numeric_cols']:
+        if pd.api.types.is_numeric_dtype(df[filter_col]):
             min_val = float(df[filter_col].min())
             max_val = float(df[filter_col].max())
             val_range = st.slider("Range", min_val, max_val, (min_val, max_val))
@@ -248,30 +201,21 @@ def main():
                 st.warning("Could not filter this column")
     
     # Tabs
-    tab1, tab2, tab3 = st.tabs(["Visualizations", "Data", "Export"])
+    tab1, tab2, tab3 = st.tabs(["Data", "Visualizations", "Export"])
     
     with tab1:
-        # Visualizations
-        if col_analysis['categorical_cols']:
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                selected = st.selectbox("Pie Chart Category", col_analysis['categorical_cols'])
-                fig = px.pie(df, names=selected)
-                st.plotly_chart(fig, use_container_width=True)
-            
-            with col2:
-                selected = st.selectbox("Bar Chart Category", col_analysis['categorical_cols'])
-                fig = px.histogram(df, x=selected)
-                st.plotly_chart(fig, use_container_width=True)
-        
-        if col_analysis['numeric_cols']:
-            selected = st.selectbox("Histogram Column", col_analysis['numeric_cols'])
-            fig = px.histogram(df, x=selected)
-            st.plotly_chart(fig, use_container_width=True)
+        st.dataframe(df, height=600)
     
     with tab2:
-        st.dataframe(df, height=600)
+        # Simple visualizations that always work
+        st.subheader("Value Counts")
+        selected_col = st.selectbox("Select column", df.columns)
+        try:
+            st.write(df[selected_col].value_counts())
+            fig = px.bar(df[selected_col].value_counts())
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            st.error(f"Could not visualize: {str(e)}")
     
     with tab3:
         st.header("Export Data")
@@ -279,19 +223,19 @@ def main():
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("Export to Excel"):
+            if st.button("📥 Excel Export"):
                 handle_export("xlsx")
         
         with col2:
-            if st.button("Export to CSV"):
+            if st.button("📥 CSV Export"):
                 handle_export("csv")
         
         with col3:
-            if st.button("Export to SPSS"):
+            if st.button("📥 SPSS Export"):
                 handle_export("spss_labels")
 
 def handle_export(export_type):
-    """Manage export process"""
+    """Handle the export process"""
     export_url = trigger_export(export_type)
     if not export_url:
         return
