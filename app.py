@@ -18,158 +18,145 @@ header {visibility: hidden;}
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# KoboToolbox credentials (using both methods for compatibility)
+# KoboToolbox credentials
 KOBO_API_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
 FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
 BASE_URL = "https://kf.kobotoolbox.org"
 API_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
 
 # ==============================================
-# AUTHENTICATION WRAPPER (DUAL METHOD)
-# ==============================================
-
-def make_authenticated_request(url):
-    """Try both authentication methods with proper headers"""
-    headers = {
-        "Authorization": f"Token {KOBO_API_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    
-    # Try Token Auth first
-    try:
-        response = requests.get(url, headers=headers, timeout=30)
-        if response.status_code == 200:
-            return response
-    except:
-        pass
-    
-    # Fallback to Basic Auth if Token Auth fails
-    try:
-        response = requests.get(
-            url,
-            auth=requests.auth.HTTPBasicAuth(KOBO_API_TOKEN, ''),
-            timeout=30
-        )
-        return response
-    except Exception as e:
-        st.error(f"🚨 Connection failed: {str(e)}")
-        return None
-
-# ==============================================
-# DATA FETCHING WITH COMPLETE ERROR HANDLING
+# IMPROVED DATA FETCHING WITH ERROR HANDLING
 # ==============================================
 
 @st.cache_data(ttl=3600)
 def fetch_kobo_data():
-    """Fetch data with multiple fallback methods"""
-    response = make_authenticated_request(API_URL)
-    
-    if not response:
-        st.error("Failed to connect to KoboToolbox API")
-        return pd.DataFrame()
-    
-    if response.status_code == 401:
-        st.error("""
-        🔐 Authentication Failed - Possible fixes:
-        1. Regenerate API token at [KoboToolbox](https://kf.kobotoolbox.org/token/)
-        2. Verify form sharing permissions
-        3. Check server URL is correct
-        """)
-        return pd.DataFrame()
-    
-    if response.status_code == 404:
-        st.error("Form not found - verify FORM_UID is correct")
-        return pd.DataFrame()
+    headers = {"Authorization": f"Token {KOBO_API_TOKEN}"}
     
     try:
+        response = requests.get(API_URL, headers=headers, timeout=30)
+        if response.status_code == 401:
+            st.error("401 Unauthorized - Please verify your API token is valid")
+            return pd.DataFrame()
+        
+        response.raise_for_status()
         data = response.json().get("results", [])
+        
         if not data:
-            st.warning("Form exists but has no submissions yet")
+            st.warning("No submissions found in this form")
         return pd.DataFrame(data)
-    except:
-        st.error("Failed to parse API response")
+        
+    except Exception as e:
+        st.error(f"Data fetch error: {str(e)}")
         return pd.DataFrame()
 
 # ==============================================
-# MAIN DASHBOARD
+# SAFE DATA PROCESSING
+# ==============================================
+
+def safe_nunique(series):
+    """Handle nunique() for problematic columns"""
+    try:
+        return series.nunique()
+    except:
+        try:
+            return len(series.astype(str).unique())
+        except:
+            return 0
+
+def clean_data(df):
+    """Ensure all columns are filterable"""
+    if df.empty:
+        return df
+    
+    # Convert date columns safely
+    for col in df.columns:
+        if 'date' in col.lower():
+            try:
+                df[col] = pd.to_datetime(df[col], errors='coerce')
+            except:
+                pass
+    
+    # Clean problematic columns
+    for col in df.columns:
+        try:
+            pd.to_numeric(df[col], errors='raise')
+        except:
+            df[col] = df[col].astype(str)
+    
+    return df
+
+# ==============================================
+# ROBUST VISUALIZATION FUNCTIONS
+# ==============================================
+
+def create_safe_visualizations(df):
+    """Generate charts with error handling"""
+    if df.empty:
+        st.warning("No data available for visualizations")
+        return
+    
+    tab1, tab2 = st.tabs(["Charts", "Data"])
+    
+    with tab1:
+        # Get safe categorical columns
+        cat_cols = [col for col in df.columns 
+                   if safe_nunique(df[col]) < 20 
+                   and safe_nunique(df[col]) > 0]
+        
+        if cat_cols:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                try:
+                    selected = st.selectbox("Pie Chart Category", cat_cols)
+                    fig = px.pie(df, names=selected)
+                    st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Couldn't create pie chart: {str(e)}")
+            
+            with col2:
+                try:
+                    selected = st.selectbox("Bar Chart Category", cat_cols)
+                    fig = px.histogram(df, x=selected)
+                    st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Couldn't create bar chart: {str(e)}")
+        
+        # Numeric visualizations
+        num_cols = df.select_dtypes(include=['number']).columns
+        if len(num_cols) > 0:
+            st.subheader("Numeric Data")
+            selected = st.selectbox("Select numeric column", num_cols)
+            try:
+                fig = px.histogram(df, x=selected)
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Couldn't create histogram: {str(e)}")
+    
+    with tab2:
+        st.dataframe(df, height=600)
+
+# ==============================================
+# MAIN APPLICATION
 # ==============================================
 
 def main():
     st.title("📊 KoboToolbox Analytics Dashboard")
     
-    # Load data
+    # Load and clean data
     df = fetch_kobo_data()
+    df = clean_data(df)
     
     if df.empty:
         st.stop()
     
-    # Auto-detect column types
-    date_cols = [col for col in df.columns if 'date' in col.lower()]
-    for col in date_cols:
-        try:
-            df[col] = pd.to_datetime(df[col])
-        except:
-            pass
+    # Create visualizations
+    create_safe_visualizations(df)
     
-    # SIDEBAR FILTERS
-    with st.sidebar:
-        st.header("🔍 Filters")
-        
-        # Date filter
-        if date_cols:
-            date_col = st.selectbox("Filter by date column", date_cols)
-            min_date = df[date_col].min().to_pydatetime()
-            max_date = df[date_col].max().to_pydatetime()
-            date_range = st.date_input("Date range", [min_date, max_date])
-            
-            if len(date_range) == 2:
-                df = df[
-                    (df[date_col] >= pd.to_datetime(date_range[0])) & 
-                    (df[date_col] <= pd.to_datetime(date_range[1]))
-                ]
-        
-        # Dynamic filters
-        filter_col = st.selectbox("Filter by column", df.columns)
-        if pd.api.types.is_numeric_dtype(df[filter_col]):
-            min_val, max_val = float(df[filter_col].min()), float(df[filter_col].max())
-            val_range = st.slider("Range", min_val, max_val, (min_val, max_val))
-            df = df[df[filter_col].between(*val_range)]
-        else:
-            options = st.multiselect("Select values", df[filter_col].unique())
-            if options:
-                df = df[df[filter_col].isin(options)]
-    
-    # VISUALIZATIONS
-    tab1, tab2 = st.tabs(["Charts", "Data"])
-    
-    with tab1:
-        col1, col2 = st.columns(2)
-        
-        # Pie Chart
-        with col1:
-            cat_cols = [c for c in df.columns if df[c].nunique() < 10]
-            if cat_cols:
-                selected = st.selectbox("Pie Chart Category", cat_cols)
-                fig = px.pie(df, names=selected)
-                st.plotly_chart(fig, use_container_width=True)
-        
-        # Bar Chart
-        with col2:
-            if cat_cols:
-                selected = st.selectbox("Bar Chart Category", cat_cols)
-                fig = px.histogram(df, x=selected)
-                st.plotly_chart(fig, use_container_width=True)
-    
-    with tab2:
-        st.dataframe(df, height=600)
-    
-    # DEBUGGING
-    with st.expander("🔧 Technical Details"):
-        st.code(f"""
-        API URL: {API_URL}
-        Last Fetch: {datetime.now().strftime('%Y-%m-%d %H:%M')}
-        Data Shape: {df.shape}
-        """)
+    # Debug info
+    with st.expander("Technical Details"):
+        st.write(f"Data shape: {df.shape}")
+        st.write(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
 if __name__ == "__main__":
     main()
