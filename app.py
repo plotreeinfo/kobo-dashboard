@@ -3,6 +3,7 @@ import requests
 import pandas as pd
 from datetime import datetime
 import json
+from urllib.parse import urljoin
 
 # Set up the page configuration
 st.set_page_config(
@@ -13,7 +14,7 @@ st.set_page_config(
 
 @st.cache_data(ttl=3600)
 def fetch_kobo_data():
-    """Fetch data from Kobo Toolbox API with media handling"""
+    """Fetch raw data directly from Kobo Toolbox API"""
     try:
         # Get credentials from secrets
         api_token = st.secrets["KOBO_API_TOKEN"]
@@ -36,70 +37,80 @@ def fetch_kobo_data():
         if not submissions:
             return pd.DataFrame()
             
-        # Process submissions to extract media URLs
-        processed_data = []
-        for sub in submissions:
-            record = {}
-            for key, value in sub.items():
-                # Handle nested fields
-                if isinstance(value, dict):
-                    for nested_key, nested_value in value.items():
-                        # Check for media attachments
-                        if nested_key == 'filename' and 'download_url' in value:
-                            record[key] = f"[Media File]({value['download_url']})"
-                        else:
-                            record[f"{key}.{nested_key}"] = nested_value
-                else:
-                    record[key] = value
-            processed_data.append(record)
+        # Convert to DataFrame without flattening
+        df = pd.DataFrame(submissions)
         
-        df = pd.DataFrame(processed_data)
+        # Process attachments to create direct download links
+        if '_attachments' in df.columns:
+            df['_attachments'] = df['_attachments'].apply(
+                lambda x: [urljoin(KOBO_API_URL, a['download_url']) for a in x] if x else None
+            )
+        
         return df
         
     except Exception as e:
         st.error(f"Error fetching data: {str(e)}")
         return None
 
-def display_media(row):
-    """Display media files from a row of data"""
-    media_columns = [col for col in row.index if any(x in str(col).lower() for x in ['image', 'photo', 'video', 'audio'])]
+def display_kobo_table(df):
+    """Display data table with download buttons just like Kobo Toolbox"""
+    if df is None or df.empty:
+        return
     
-    for col in media_columns:
-        if pd.notna(row[col]) and ('http' in str(row[col])):
-            st.write(f"**{col}**")
-            if any(ext in str(row[col]).lower() for ext in ['.jpg', '.jpeg', '.png', '.gif']):
-                st.image(row[col])
-            elif any(ext in str(row[col]).lower() for ext in ['.mp4', '.mov', '.avi']):
-                st.video(row[col])
-            elif any(ext in str(row[col]).lower() for ext in ['.mp3', '.wav', '.ogg']):
-                st.audio(row[col])
-            else:
-                st.markdown(f"[Download File]({row[col]})")
+    st.subheader("Raw Data from Kobo Toolbox")
+    
+    # Create a copy for display
+    display_df = df.copy()
+    
+    # Convert attachments to clickable links
+    if '_attachments' in display_df.columns:
+        display_df['_attachments'] = display_df['_attachments'].apply(
+            lambda x: "\n".join([f'<a href="{url}" target="_blank">Download</a>' for url in x]) if x else None
+        )
+    
+    # Display the table with HTML rendering
+    st.write(
+        display_df.to_html(escape=False, render_links=True), 
+        unsafe_allow_html=True
+    )
+    
+    # Add CSV download button
+    st.download_button(
+        label="Download Full Data as CSV",
+        data=df.to_csv(index=False).encode('utf-8'),
+        file_name=f'kobo_data_{datetime.now().strftime("%Y%m%d")}.csv',
+        mime='text/csv'
+    )
 
 def main():
-    st.title("Kobo Toolbox Data Dashboard with Media")
+    st.title("Kobo Toolbox Data Viewer")
+    st.markdown("""
+    <style>
+    a {
+        color: #ff4b4b;
+        text-decoration: none;
+    }
+    a:hover {
+        text-decoration: underline;
+    }
+    </style>
+    """, unsafe_allow_html=True)
     
-    with st.spinner("Loading data..."):
+    with st.spinner("Loading data directly from Kobo Toolbox..."):
         df = fetch_kobo_data()
     
     if df is None:
-        st.error("Failed to fetch data")
-        return
+        st.error("Failed to fetch data. Please check:")
+        st.markdown("""
+        - API token is correct in secrets.toml
+        - Form UID is correct
+        - You have internet connection
+        """)
     elif df.empty:
-        st.warning("No submissions found")
-        return
-    
-    st.success(f"Loaded {len(df)} submissions")
-    
-    # Show data table
-    st.subheader("All Data")
-    st.dataframe(df)
-    
-    # Show media files for selected record
-    st.subheader("Media Viewer")
-    selected_index = st.selectbox("Select a record to view media", range(len(df)))
-    
-    display_media(df.iloc[selected_index])
+        st.warning("No submissions found in this form")
+    else:
+        st.success(f"Loaded {len(df)} submissions directly from Kobo Toolbox")
+        display_kobo_table(df)
 
 if __name__ == "__main__":
     main()
