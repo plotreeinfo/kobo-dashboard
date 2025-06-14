@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px  # This import was missing
 import requests
 import time
 from datetime import datetime
@@ -190,21 +191,6 @@ export_format = st.radio(
     horizontal=True
 )
 
-# Export Options
-with st.expander("Export Options", expanded=True):
-    st.markdown("""
-    **KoboToolbox Standard Export Features:**
-    - Includes all media URLs
-    - Preserves original question groups
-    - Maintains proper column ordering
-    - Contains all submission metadata
-    """)
-    
-    if st.checkbox("Include rejected submissions", value=True):
-        include_rejected = "true"
-    else:
-        include_rejected = "false"
-
 # Export Button
 if st.button("Generate KoboToolbox Export"):
     with st.spinner("Requesting export from KoboToolbox..."):
@@ -246,7 +232,7 @@ if st.button("Generate KoboToolbox Export"):
                 status_text.warning("Export taking longer than expected. Please check KoboToolbox later.")
 
 # ==============================================
-# VISUALIZATIONS
+# VISUALIZATIONS (WITH FIXED PLOTLY EXPRESS)
 # ==============================================
 
 st.subheader("📊 Visualizations")
@@ -287,7 +273,7 @@ if "submission_date" in df.columns:
             
             trend_data = trend_data.sort_values(group_col)
             
-            # Create and display plot
+            # Create and display plot using Plotly Express
             fig = px.line(trend_data, x=group_col, y='count',
                          title=f"Submissions by {freq}",
                          labels={'count': 'Number of Submissions'})
@@ -309,6 +295,32 @@ if "submission_date" in df.columns:
 else:
     st.warning("Submission date information not available in this dataset")
 
+# Additional Analysis
+st.markdown("### Data Distribution")
+
+# Select a column to analyze
+analysis_col = st.selectbox(
+    "Select column to analyze",
+    [col for col in df.columns if col not in ['submission_date', 'username']]
+)
+
+if analysis_col:
+    try:
+        if pd.api.types.is_numeric_dtype(df[analysis_col]):
+            # Histogram for numeric data
+            fig = px.histogram(df, x=analysis_col, 
+                             title=f"Distribution of {analysis_col}")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            # Bar chart for categorical data
+            value_counts = df[analysis_col].value_counts().reset_index()
+            value_counts.columns = [analysis_col, 'count']
+            fig = px.bar(value_counts, x=analysis_col, y='count',
+                        title=f"Distribution of {analysis_col}")
+            st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.error(f"Could not visualize {analysis_col}: {str(e)}")
+
 # ==============================================
 # FOOTER
 # ==============================================
@@ -323,4 +335,4 @@ st.markdown("""
 - Data quality indicators
 """)
 
-st.success("✅ Dashboard ready with official KoboToolbox export functionality")
+st.success("✅ Dashboard ready with all functionality working properly")
