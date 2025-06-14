@@ -5,7 +5,9 @@ import requests
 import time
 from datetime import datetime
 
-
+# ==============================================
+# CONFIGURATION (YOUR ORIGINAL STYLE)
+# ==============================================
 
 hide_streamlit_style = """
 <style>
@@ -25,19 +27,18 @@ BASE_URL = "https://kf.kobotoolbox.org"
 API_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
 EXPORT_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
 
-
+# ==============================================
+# SAFE DATA HANDLING FUNCTIONS
+# ==============================================
 
 def safe_nunique(series):
     """Count unique values safely for any column type"""
     try:
-        # First try standard nunique
         return series.nunique()
     except TypeError:
         try:
-            # Fallback to string conversion
             return len(series.astype(str).unique())
         except:
-            # Final fallback
             return 0
 
 @st.cache_data(ttl=3600)
@@ -104,7 +105,86 @@ def clean_data(df):
     
     return df
 
+# ==============================================
+# FIXED EXPORT FUNCTION (HTTP 400 SOLUTION)
+# ==============================================
 
+def handle_kobo_export(export_type):
+    """Fixed export function that handles HTTP 400 errors"""
+    headers = {
+        "Authorization": f"Token {KOBO_API_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    # CORRECTED PAYLOAD STRUCTURE
+    payload = {
+        "type": export_type,
+        "fields_from_all_versions": True,  # Changed from string to boolean
+        "hierarchy_in_labels": True,       # Changed from string to boolean
+        "group_sep": "/",
+        "lang": "English"
+    }
+    
+    try:
+        # Step 1: Initiate export
+        with st.spinner(f"Creating {export_type.upper()} export..."):
+            response = requests.post(
+                EXPORT_URL,
+                headers=headers,
+                json=payload,  # Using json instead of data
+                timeout=30
+            )
+            
+            if response.status_code == 400:
+                st.error("""
+                ❌ Bad Request (400) - Common fixes:
+                1. Ensure your token has export permissions
+                2. Check the form has submissions
+                3. Verify server URL is correct
+                """)
+                st.json(response.json())  # Show API error details
+                return None
+                
+            if response.status_code != 201:
+                st.error(f"Export failed (HTTP {response.status_code})")
+                return None
+                
+            export_uid = response.json().get('uid')
+            if not export_uid:
+                st.error("No export UID received")
+                return None
+        
+        # Step 2: Wait for export to process
+        status_url = f"{EXPORT_URL}{export_uid}/"
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        for i in range(15):  # 15 attempts with 3s delay (45s total)
+            status_response = requests.get(status_url, headers=headers)
+            status_data = status_response.json()
+            
+            if status_data.get('status') == 'complete':
+                progress_bar.progress(100)
+                status_text.success("Export ready!")
+                return status_data.get('result')
+            elif status_data.get('status') in ('error', 'failed'):
+                st.error(f"Export failed: {status_data.get('messages', 'Unknown error')}")
+                return None
+                
+            progress_bar.progress((i + 1) * 7)  # Approximate progress
+            status_text.text(f"Processing... {((i + 1) * 7)}%")
+            time.sleep(3)
+            
+        st.error("Export timed out")
+        return None
+        
+    except Exception as e:
+        st.error(f"Export error: {str(e)}")
+        return None
+
+# ==============================================
+# DASHBOARD COMPONENTS (WITH SAFETY CHECKS)
+# ==============================================
 
 def create_filters(df):
     """Safe filter implementation"""
@@ -199,91 +279,56 @@ def create_visualizations(df):
     
     with tab3:
         st.header("Direct Download from KoboToolbox")
+        st.markdown("Get original data with all form structure intact")
         
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("📥 Excel Export"):
-                handle_export("xlsx")
+            if st.button("📥 Excel (XLSX)"):
+                download_file("xlsx")
         
         with col2:
-            if st.button("📥 CSV Export"):
-                handle_export("csv")
+            if st.button("📥 CSV"):
+                download_file("csv")
         
         with col3:
-            if st.button("📥 SPSS Export"):
-                handle_export("spss_labels")
+            if st.button("📥 SPSS"):
+                download_file("spss_labels")
 
-
-
-def handle_export(export_type):
-    """Manage the export process"""
-    headers = {"Authorization": f"Token {KOBO_API_TOKEN}"}
-    
-    try:
-        # 1. Create export
-        payload = {
-            "type": export_type,
-            "fields_from_all_versions": "true",
-            "lang": "English"
-        }
-        
-        with st.spinner(f"Creating {export_type.upper()} export..."):
-            response = requests.post(EXPORT_URL, headers=headers, json=payload)
-            
-            if response.status_code != 201:
-                st.error(f"Export failed (HTTP {response.status_code})")
-                return
-            
-            export_uid = response.json().get('uid')
-            status_url = f"{EXPORT_URL}{export_uid}/"
-        
-        # 2. Wait for completion
-        with st.spinner("Processing export..."):
-            for _ in range(30):  # 30 attempts with 2s delay
-                status_response = requests.get(status_url, headers=headers)
-                status_data = status_response.json()
+def download_file(export_type):
+    """Handle the download process with progress"""
+    download_url = handle_kobo_export(export_type)
+    if download_url:
+        try:
+            headers = {"Authorization": f"Token {KOBO_API_TOKEN}"}
+            with st.spinner("Preparing download..."):
+                response = requests.get(download_url, headers=headers)
                 
-                if status_data.get('status') == 'complete':
-                    download_url = status_data.get('result')
-                    if download_url:
-                        # 3. Download file
-                        file_response = requests.get(download_url, headers=headers)
-                        if file_response.status_code == 200:
-                            st.success("Export ready! Click below to download")
-                            
-                            ext = "sav" if export_type == "spss_labels" else export_type
-                            mime_types = {
-                                "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                "csv": "text/csv",
-                                "spss_labels": "application/octet-stream"
-                            }
-                            
-                            st.download_button(
-                                label=f"Download {export_type.upper()}",
-                                data=file_response.content,
-                                file_name=f"kobo_export.{ext}",
-                                mime=mime_types[export_type]
-                            )
-                            return
-                
-                elif status_data.get('status') in ('error', 'failed'):
-                    st.error(f"Export failed: {status_data.get('messages', 'Unknown error')}")
-                    return
-                
-                time.sleep(2)
-            
-            st.error("Export timed out")
-            
-    except Exception as e:
-        st.error(f"Export error: {str(e)}")
+                if response.status_code == 200:
+                    ext = "sav" if export_type == "spss_labels" else export_type
+                    mime_types = {
+                        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        "csv": "text/csv",
+                        "spss_labels": "application/octet-stream"
+                    }
+                    
+                    st.download_button(
+                        label=f"Download {export_type.upper()}",
+                        data=response.content,
+                        file_name=f"kobo_export.{ext}",
+                        mime=mime_types[export_type]
+                    )
+                else:
+                    st.error(f"Download failed (HTTP {response.status_code})")
+        except Exception as e:
+            st.error(f"Download error: {str(e)}")
 
 # ==============================================
 # MAIN APP
 # ==============================================
 
 def main():
-    st.title("📊 Onsite Dashboard")
+    st.title("📊 KoboToolbox Dashboard")
     
     # Load and clean data
     df = fetch_kobo_data()
