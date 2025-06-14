@@ -34,14 +34,11 @@ EXPORT_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
 def safe_nunique(series):
     """Count unique values safely for any column type"""
     try:
-        # First try standard nunique
         return series.nunique()
     except TypeError:
         try:
-            # Fallback to string conversion
             return len(series.astype(str).unique())
         except:
-            # Final fallback
             return 0
 
 @st.cache_data(ttl=3600)
@@ -141,7 +138,7 @@ def handle_kobo_export(export_type):
             if response.status_code == 400:
                 st.error("""
                 ❌ Bad Request - Verify:
-                1. Your token has export permissions
+                1. Your token has export permissions (check at kf.kobotoolbox.org/token/)
                 2. The form has submissions
                 3. All boolean values are True/False (not "true"/"false")
                 """)
@@ -287,47 +284,56 @@ def create_visualizations(df):
     
     with tab3:
         st.header("Direct Download from KoboToolbox")
+        st.markdown("""
+        Download original data with all form structure intact.
+        These exports match what you'd get from the KoboToolbox web interface.
+        """)
         
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("📥 Excel (XLSX)"):
-                download_url = handle_kobo_export("xlsx")
-                if download_url:
-                    st.success("Click below to download")
-                    st.markdown(f"""
-                    <a href="{download_url}" download="kobo_export.xlsx">
-                        <button style="background-color:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:5px;">
-                            Download XLSX File
-                        </button>
-                    </a>
-                    """, unsafe_allow_html=True)
+            if st.button("📥 Excel Export (XLSX)"):
+                download_file("xlsx")
         
         with col2:
-            if st.button("📥 CSV"):
-                download_url = handle_kobo_export("csv")
-                if download_url:
-                    st.success("Click below to download")
-                    st.markdown(f"""
-                    <a href="{download_url}" download="kobo_export.csv">
-                        <button style="background-color:#2196F3;color:white;padding:10px 20px;border:none;border-radius:5px;">
-                            Download CSV File
-                        </button>
-                    </a>
-                    """, unsafe_allow_html=True)
+            if st.button("📥 CSV Export"):
+                download_file("csv")
         
         with col3:
-            if st.button("📥 SPSS"):
-                download_url = handle_kobo_export("spss_labels")
-                if download_url:
-                    st.success("Click below to download")
-                    st.markdown(f"""
-                    <a href="{download_url}" download="kobo_export.sav">
-                        <button style="background-color:#9C27B0;color:white;padding:10px 20px;border:none;border-radius:5px;">
-                            Download SPSS File
-                        </button>
-                    </a>
-                    """, unsafe_allow_html=True)
+            if st.button("📥 SPSS Export"):
+                download_file("spss_labels")
+
+def download_file(export_type):
+    """Handle the complete download process"""
+    download_url = handle_kobo_export(export_type)
+    if not download_url:
+        return
+    
+    try:
+        headers = {"Authorization": f"Token {KOBO_API_TOKEN}"}
+        with st.spinner("Preparing download..."):
+            response = requests.get(download_url, headers=headers)
+            
+            if response.status_code == 200:
+                # Determine file extension and MIME type
+                file_ext = "xlsx" if export_type == "xlsx" else "csv" if export_type == "csv" else "sav"
+                mime_type = {
+                    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "csv": "text/csv",
+                    "spss_labels": "application/octet-stream"
+                }[export_type]
+                
+                st.download_button(
+                    label=f"💾 Download {export_type.upper()}",
+                    data=response.content,
+                    file_name=f"kobo_export.{file_ext}",
+                    mime=mime_type,
+                    key=f"download_{export_type}"
+                )
+            else:
+                st.error(f"Download failed (HTTP {response.status_code})")
+    except Exception as e:
+        st.error(f"Download error: {str(e)}")
 
 # ==============================================
 # MAIN APP
