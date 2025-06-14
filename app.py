@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import requests
-import json
 import time
 from datetime import datetime
 
@@ -27,6 +26,87 @@ BASE_URL = "https://kf.kobotoolbox.org"
 # API endpoints
 API_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
 EXPORT_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
+
+# ==============================================
+# SAFE DATA HANDLING FUNCTIONS
+# ==============================================
+
+def safe_nunique(series):
+    """Count unique values safely for any column type"""
+    try:
+        # First try standard nunique
+        return series.nunique()
+    except TypeError:
+        try:
+            # Fallback to string conversion
+            return len(series.astype(str).unique())
+        except:
+            # Final fallback
+            return 0
+
+@st.cache_data(ttl=3600)
+def fetch_kobo_data():
+    """Fetch data with comprehensive error handling"""
+    headers = {
+        "Authorization": f"Token {KOBO_API_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        # Verify asset exists first
+        asset_url = f"{BASE_URL}/api/v2/assets/{FORM_UID}/"
+        asset_response = requests.get(asset_url, headers=headers, timeout=10)
+        
+        if asset_response.status_code == 404:
+            st.error("❌ Form not found - Check FORM_UID")
+            return pd.DataFrame()
+        
+        # Fetch data
+        data_response = requests.get(API_URL, headers=headers, timeout=30)
+        
+        if data_response.status_code == 401:
+            st.error("""
+            🔐 Authentication Failed - Verify:
+            1. API Token is correct and recent
+            2. You have 'View Submissions' permission
+            3. FORM_UID matches your form's URL
+            """)
+            return pd.DataFrame()
+            
+        data_response.raise_for_status()
+        data = data_response.json().get("results", [])
+        
+        if not data:
+            st.warning("⚠️ Form exists but has no submissions yet")
+            
+        return pd.DataFrame(data)
+        
+    except Exception as e:
+        st.error(f"🔌 Connection error: {str(e)}")
+        return pd.DataFrame()
+
+def clean_data(df):
+    """Ensure all columns are safe for processing"""
+    if df.empty:
+        return df
+    
+    # Convert date columns
+    for col in df.columns:
+        if 'date' in col.lower():
+            try:
+                df[col] = pd.to_datetime(df[col], errors='coerce')
+            except:
+                pass
+    
+    # Ensure all columns are filterable
+    for col in df.columns:
+        try:
+            if not pd.api.types.is_numeric_dtype(df[col]):
+                df[col] = df[col].astype(str)
+        except:
+            df[col] = df[col].astype(str)
+    
+    return df
 
 # ==============================================
 # FIXED EXPORT FUNCTION (SOLVES HTTP 400 ERROR)
@@ -110,44 +190,20 @@ def handle_kobo_export(export_type):
         return None
 
 # ==============================================
-# REST OF YOUR DASHBOARD CODE (UNCHANGED)
+# SAFE DASHBOARD COMPONENTS
 # ==============================================
 
-@st.cache_data(ttl=3600)
-def fetch_kobo_data():
-    headers = {
-        "Authorization": f"Token {KOBO_API_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    
-    try:
-        response = requests.get(API_URL, headers=headers, timeout=30)
-        
-        if response.status_code == 401:
-            st.error("Authentication Failed - Check API Token")
-            return pd.DataFrame()
-            
-        response.raise_for_status()
-        data = response.json().get("results", [])
-        return pd.DataFrame(data)
-    except Exception as e:
-        st.error(f"Data fetch error: {str(e)}")
-        return pd.DataFrame()
-
-def clean_data(df):
-    for col in df.columns:
-        if 'date' in col.lower():
-            try:
-                df[col] = pd.to_datetime(df[col])
-            except:
-                pass
-    return df
-
 def create_filters(df):
+    """Safe filter implementation"""
+    if df.empty:
+        return df
+    
     with st.sidebar:
         st.header("🔍 Filters")
         
-        date_cols = [col for col in df.columns if 'date' in col.lower()]
+        # Date filter
+        date_cols = [col for col in df.columns 
+                    if pd.api.types.is_datetime64_any_dtype(df[col])]
         if date_cols:
             selected_date_col = st.selectbox("Filter by date", date_cols)
             min_date = df[selected_date_col].min()
@@ -166,48 +222,65 @@ def create_filters(df):
                     (df[selected_date_col] <= pd.to_datetime(date_range[1]))
                 ]
 
+        # Column filters
         filter_col = st.selectbox("Filter by column", df.columns)
+        
         if pd.api.types.is_numeric_dtype(df[filter_col]):
-            min_val, max_val = float(df[filter_col].min()), float(df[filter_col].max())
+            min_val = float(df[filter_col].min())
+            max_val = float(df[filter_col].max())
             val_range = st.slider("Range", min_val, max_val, (min_val, max_val))
             df = df[df[filter_col].between(*val_range)]
         else:
-            options = st.multiselect("Select values", df[filter_col].unique())
+            unique_vals = df[filter_col].dropna().unique()
+            options = st.multiselect("Select values", unique_vals)
             if options:
                 df = df[df[filter_col].isin(options)]
+    
     return df
 
-def main():
-    st.title("📊 KoboToolbox Dashboard")
-    
-    # Load data
-    df = fetch_kobo_data()
-    df = clean_data(df)
-    
+def create_visualizations(df):
+    """Safe chart generation"""
     if df.empty:
-        st.stop()
+        st.warning("No data available for visualizations")
+        return
     
-    # Apply filters
-    df = create_filters(df)
-    
-    # Your tabs layout
     tab1, tab2, tab3 = st.tabs(["Charts", "Data", "Download"])
     
     with tab1:
-        col1, col2 = st.columns(2)
+        # Get only columns that can be visualized
+        cat_cols = [col for col in df.columns 
+                   if safe_nunique(df[col]) < 20 
+                   and safe_nunique(df[col]) > 0]
         
-        with col1:
-            cat_cols = [c for c in df.columns if df[c].nunique() < 10]
-            if cat_cols:
-                selected = st.selectbox("Pie Chart", cat_cols)
-                fig = px.pie(df, names=selected)
-                st.plotly_chart(fig, use_container_width=True)
+        if cat_cols:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                try:
+                    selected = st.selectbox("Pie Chart Category", cat_cols)
+                    fig = px.pie(df, names=selected)
+                    st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Couldn't create pie chart: {str(e)}")
+            
+            with col2:
+                try:
+                    selected = st.selectbox("Bar Chart Category", cat_cols)
+                    fig = px.histogram(df, x=selected)
+                    st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Couldn't create bar chart: {str(e)}")
         
-        with col2:
-            if cat_cols:
-                selected = st.selectbox("Bar Chart", cat_cols)
+        # Numeric visualizations
+        num_cols = df.select_dtypes(include=['number']).columns
+        if len(num_cols) > 0:
+            st.subheader("Numeric Data")
+            selected = st.selectbox("Select numeric column", num_cols)
+            try:
                 fig = px.histogram(df, x=selected)
                 st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Couldn't create histogram: {str(e)}")
     
     with tab2:
         st.dataframe(df, height=600)
@@ -218,7 +291,7 @@ def main():
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("📥 Excel Export (XLSX)"):
+            if st.button("📥 Excel (XLSX)"):
                 download_url = handle_kobo_export("xlsx")
                 if download_url:
                     st.success("Click below to download")
@@ -231,7 +304,7 @@ def main():
                     """, unsafe_allow_html=True)
         
         with col2:
-            if st.button("📥 CSV Export"):
+            if st.button("📥 CSV"):
                 download_url = handle_kobo_export("csv")
                 if download_url:
                     st.success("Click below to download")
@@ -244,7 +317,7 @@ def main():
                     """, unsafe_allow_html=True)
         
         with col3:
-            if st.button("📥 SPSS Export"):
+            if st.button("📥 SPSS"):
                 download_url = handle_kobo_export("spss_labels")
                 if download_url:
                     st.success("Click below to download")
@@ -255,6 +328,26 @@ def main():
                         </button>
                     </a>
                     """, unsafe_allow_html=True)
+
+# ==============================================
+# MAIN APP
+# ==============================================
+
+def main():
+    st.title("📊 KoboToolbox Dashboard")
+    
+    # Load and clean data
+    df = fetch_kobo_data()
+    df = clean_data(df)
+    
+    if df.empty:
+        st.stop()
+    
+    # Apply filters
+    df = create_filters(df)
+    
+    # Create visualizations
+    create_visualizations(df)
 
 if __name__ == "__main__":
     main()
