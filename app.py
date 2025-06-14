@@ -5,21 +5,25 @@ from datetime import datetime
 from io import BytesIO
 
 # ===============================
-# 🔐 Credentials (Hardcoded for local/dev use)
+# 🔐 Kobo Credentials
 # ===============================
 KOBO_USERNAME = "plotree"
 KOBO_API_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
 FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
 KOBO_URL = "https://kf.kobotoolbox.org"
 
-# Configure the page
+# ===============================
+# 🌐 Streamlit Page Config
+# ===============================
 st.set_page_config(
     page_title="Kobo Data Viewer",
     layout="wide",
     page_icon="📋"
 )
 
-# Custom CSS for Kobo-like styling
+# ===============================
+# 🎨 Custom CSS
+# ===============================
 st.markdown("""
 <style>
     .stDataFrame {
@@ -39,13 +43,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-@st.cache_data(ttl=3600)
+# ===============================
+# 📦 Fetch Kobo Data
+# ===============================
 def fetch_kobo_data():
-    """Fetch data from Kobo Toolbox API"""
     try:
-        ENDPOINT = f"/api/v2/assets/{FORM_UID}/data/"
+        endpoint = f"/api/v2/assets/{FORM_UID}/data/"
         response = requests.get(
-            KOBO_URL + ENDPOINT,
+            KOBO_URL + endpoint,
             headers={
                 "Authorization": f"Token {KOBO_API_TOKEN}",
                 "Accept": "application/json"
@@ -57,61 +62,66 @@ def fetch_kobo_data():
         submissions = data.get('results', [])
 
         # Process attachments
-        for submission in submissions:
-            if '_attachments' in submission:
-                for attachment in submission['_attachments']:
-                    attachment['download_link'] = (
-                        f"{KOBO_URL}/media/original?media_file={attachment['filename']}"
+        for sub in submissions:
+            if '_attachments' in sub:
+                for att in sub['_attachments']:
+                    att['download_link'] = (
+                        f"{KOBO_URL}/media/original?media_file={att['filename']}"
                     )
         return submissions
-
     except Exception as e:
         st.error(f"Failed to fetch data: {str(e)}")
         return None
 
+# ✅ Cache to avoid reloading
+def fetch_kobo_data_cached():
+    return fetch_kobo_data()
+fetch_kobo_data_cached = st.cache_data(ttl=3600)(fetch_kobo_data_cached)
+
+# ===============================
+# 🔄 Convert Submissions to DataFrame
+# ===============================
 def create_dataframe(submissions):
-    """Convert submissions to properly formatted DataFrame with selected columns"""
     if not submissions:
         return pd.DataFrame()
-    
+
     table_data = []
     for sub in submissions:
-        row = {
-            "SubmissionDate": sub.get('_submission_time'),
-            "Name": sub.get('name'),
-            "Gender": sub.get('gender'),
-            "Age": sub.get('age'),
-            "Location": sub.get('location'),
-            "Photo": "",  # Placeholder for attachment URL
-            "Feedback": sub.get('feedback')
-        }
-
-        # Handle attachment (e.g., photo)
-        if '_attachments' in sub:
-            photos = []
-            for att in sub['_attachments']:
-                link = f"{att['filename']} [Download]({att['download_link']})"
-                photos.append(link)
-            row["Photo"] = "  \n".join(photos)
-        
+        row = {}
+        for key, value in sub.items():
+            if key == "_attachments":
+                # Create Markdown download links
+                attachments = []
+                for att in value:
+                    link = f"[{att['filename']}]({att['download_link']})"
+                    attachments.append(link)
+                row["Attachments"] = "  \n".join(attachments)
+            else:
+                row[key] = str(value) if isinstance(value, (dict, list)) else value
         table_data.append(row)
-    
-    return pd.DataFrame(table_data)
 
+    df = pd.DataFrame(table_data)
+
+    # Convert submission date if available
+    if "_submission_time" in df.columns:
+        df["_submission_time"] = pd.to_datetime(df["_submission_time"], errors="coerce")
+    
+    return df
+
+# ===============================
+# 📊 Display Table
+# ===============================
 def display_table(df):
-    """Display the DataFrame with proper formatting"""
     st.dataframe(
         df,
         height=600,
-        use_container_width=True,
-        column_config={
-            "Photo": st.column_config.TextColumn("Photo"),
-            "SubmissionDate": st.column_config.DatetimeColumn("Submission Date")
-        }
+        use_container_width=True
     )
 
+# ===============================
+# 💾 Convert to Excel
+# ===============================
 def get_excel_bytes(df):
-    """Convert DataFrame to Excel bytes with error handling"""
     try:
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -121,30 +131,33 @@ def get_excel_bytes(df):
         st.error(f"Failed to create Excel file: {str(e)}")
         return None
 
+# ===============================
+# 🚀 Main App
+# ===============================
 def main():
-    st.title("Kobo Toolbox Data Viewer")
+    st.title("📋 Kobo Toolbox Data Viewer")
 
-    with st.spinner("Loading data from Kobo Toolbox..."):
-        submissions = fetch_kobo_data()
+    with st.spinner("🔄 Loading data from Kobo Toolbox..."):
+        submissions = fetch_kobo_data_cached()
 
     if submissions is None:
-        st.error("Data loading failed. Please check your connection and credentials.")
+        st.error("❌ Data loading failed. Please check your connection and credentials.")
         return
 
     df = create_dataframe(submissions)
 
     if df.empty:
-        st.warning("No submissions found in this form")
+        st.warning("⚠️ No submissions found in this form.")
         return
 
     display_table(df)
 
-    # Export buttons
+    # Export section
     col1, col2 = st.columns(2)
 
     with col1:
         st.download_button(
-            "Download as CSV",
+            "⬇️ Download as CSV",
             df.to_csv(index=False),
             "kobo_data.csv",
             "text/csv"
@@ -154,11 +167,14 @@ def main():
         excel_bytes = get_excel_bytes(df)
         if excel_bytes:
             st.download_button(
-                "Download as Excel",
+                "⬇️ Download as Excel",
                 excel_bytes,
                 "kobo_data.xlsx",
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
+# ===============================
+# ▶️ Run App
+# ===============================
 if __name__ == "__main__":
     main()
