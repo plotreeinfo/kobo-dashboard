@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px  # This import was missing
+import plotly.express as px
 import requests
 import time
 from datetime import datetime
@@ -179,7 +179,7 @@ st.subheader("🔍 Data Preview")
 st.dataframe(df.head(1000), use_container_width=True)
 
 # ==============================================
-# KOBOTOOLBOX EXPORT SECTION
+# KOBOTOOLBOX EXPORT SECTION - FIXED VERSION
 # ==============================================
 
 st.subheader("📥 Download Data")
@@ -188,11 +188,21 @@ st.subheader("📥 Download Data")
 export_format = st.radio(
     "Select export format",
     ["Excel (XLS)", "CSV"],
+    index=0,
     horizontal=True
 )
 
+# Initialize session state for export tracking
+if 'export_status' not in st.session_state:
+    st.session_state.export_status = None
+if 'export_result_url' not in st.session_state:
+    st.session_state.export_result_url = None
+if 'export_start_time' not in st.session_state:
+    st.session_state.export_start_time = None
+
 # Export Button
 if st.button("Generate KoboToolbox Export"):
+    st.session_state.export_start_time = time.time()
     with st.spinner("Requesting export from KoboToolbox..."):
         # Determine export type
         export_type = "xls" if export_format == "Excel (XLS)" else "csv"
@@ -202,37 +212,44 @@ if st.button("Generate KoboToolbox Export"):
         
         if export_url:
             st.session_state.export_url = export_url
+            st.session_state.export_status = "processing"
             st.success("Export requested! Checking status...")
+        else:
+            st.error("Failed to initiate export")
+
+# Check export status periodically if processing
+if st.session_state.export_status == "processing":
+    current_time = time.time()
+    # Only check status every 10 seconds (Kobo exports can take time)
+    if current_time - st.session_state.export_start_time > 10:
+        with st.spinner("Checking export status..."):
+            status, result_url = check_export_status(st.session_state.export_url)
             
-            # Create progress elements
-            status_bar = st.progress(0)
-            status_text = st.empty()
-            download_placeholder = st.empty()
-            
-            # Check status periodically
-            for i in range(30):  # Check for up to 5 minutes
-                status, result_url = check_export_status(export_url)
-                
-                if status == "complete":
-                    status_bar.progress(100)
-                    status_text.success("Export ready!")
-                    download_placeholder.markdown(
-                        f'<a href="{BASE_URL}{result_url}" download>Download {export_format} Export</a>',
-                        unsafe_allow_html=True
-                    )
-                    break
-                elif status == "error":
-                    status_text.error("Export failed - please try again")
-                    break
-                else:
-                    status_bar.progress((i + 1) * 3)
-                    status_text.text(f"Status: {status}...")
-                    time.sleep(10)
+            if status == "complete":
+                st.session_state.export_status = "complete"
+                st.session_state.export_result_url = result_url
+                st.success("Export ready for download!")
+            elif status == "error":
+                st.session_state.export_status = "error"
+                st.error("Export failed - please try again")
             else:
-                status_text.warning("Export taking longer than expected. Please check KoboToolbox later.")
+                # Schedule another check
+                st.session_state.export_start_time = current_time
+                st.rerun()
+
+# Show download link when export is ready
+if st.session_state.export_status == "complete" and st.session_state.export_result_url:
+    st.markdown(
+        f"""
+        ### Your export is ready!
+        [Click here to download {export_format} file]({BASE_URL}{st.session_state.export_result_url})
+        """,
+        unsafe_allow_html=True
+    )
+    st.markdown("This link will be valid for 24 hours from the KoboToolbox server.")
 
 # ==============================================
-# VISUALIZATIONS (WITH FIXED PLOTLY EXPRESS)
+# VISUALIZATIONS
 # ==============================================
 
 st.subheader("📊 Visualizations")
@@ -242,7 +259,7 @@ if "submission_date" in df.columns:
     st.markdown("### Submission Trends")
     
     # Frequency selector
-    freq = st.selectbox("Frequency", ["Daily", "Weekly", "Monthly"])
+    freq = st.selectbox("Display frequency", ["Daily", "Weekly", "Monthly"])
     
     # Initialize grouping column
     group_col = None
@@ -294,32 +311,6 @@ if "submission_date" in df.columns:
         st.warning("Could not determine proper grouping for trends")
 else:
     st.warning("Submission date information not available in this dataset")
-
-# Additional Analysis
-st.markdown("### Data Distribution")
-
-# Select a column to analyze
-analysis_col = st.selectbox(
-    "Select column to analyze",
-    [col for col in df.columns if col not in ['submission_date', 'username']]
-)
-
-if analysis_col:
-    try:
-        if pd.api.types.is_numeric_dtype(df[analysis_col]):
-            # Histogram for numeric data
-            fig = px.histogram(df, x=analysis_col, 
-                             title=f"Distribution of {analysis_col}")
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            # Bar chart for categorical data
-            value_counts = df[analysis_col].value_counts().reset_index()
-            value_counts.columns = [analysis_col, 'count']
-            fig = px.bar(value_counts, x=analysis_col, y='count',
-                        title=f"Distribution of {analysis_col}")
-            st.plotly_chart(fig, use_container_width=True)
-    except Exception as e:
-        st.error(f"Could not visualize {analysis_col}: {str(e)}")
 
 # ==============================================
 # FOOTER
