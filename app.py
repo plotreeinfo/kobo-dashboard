@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import requests
 from datetime import datetime
 
@@ -9,6 +8,9 @@ from datetime import datetime
 # ==============================================
 
 st.set_page_config(layout="wide")
+st.title("📊 KoboToolbox Data Exporter")
+
+# Hide Streamlit defaults
 hide_streamlit_style = """
 <style>
 #MainMenu {visibility: hidden;}
@@ -18,160 +20,164 @@ header {visibility: hidden;}
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# KoboToolbox credentials
-KOBO_API_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
-FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
-BASE_URL = "https://kf.kobotoolbox.org"
-API_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
-EXPORT_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
-
 # ==============================================
-# KOBOTOOLBOX EXPORT FUNCTIONS
+# AUTHENTICATION
 # ==============================================
 
-def trigger_kobo_export(export_type="xlsx"):
-    """Trigger export on KoboToolbox server"""
-    headers = {
-        "Authorization": f"Token {KOBO_API_TOKEN}",
-        "Content-Type": "application/json"
-    }
+def test_connection():
+    """Verify credentials before attempting exports"""
+    test_url = f"{st.session_state.base_url}/api/v2/assets/{st.session_state.form_uid}/"
+    headers = {"Authorization": f"Token {st.session_state.api_token}"}
+    
+    try:
+        response = requests.get(test_url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            return True
+        elif response.status_code == 401:
+            st.error("Invalid API Token - Regenerate at: https://kf.kobotoolbox.org/token/")
+        elif response.status_code == 404:
+            st.error("Form not found - Check FORM_UID in your form's URL")
+        else:
+            st.error(f"Connection failed (HTTP {response.status_code})")
+    except Exception as e:
+        st.error(f"Connection error: {str(e)}")
+    return False
+
+# ==============================================
+# EXPORT FUNCTIONS
+# ==============================================
+
+def generate_export(export_type):
+    """Trigger and download export with full error handling"""
+    export_url = f"{st.session_state.base_url}/api/v2/assets/{st.session_state.form_uid}/exports/"
+    headers = {"Authorization": f"Token {st.session_state.api_token}"}
     
     payload = {
         "type": export_type,
         "fields_from_all_versions": "true",
-        "group_sep": "/",
-        "hierarchy_in_labels": "true",
         "lang": "English"
     }
     
     try:
-        response = requests.post(EXPORT_URL, headers=headers, json=payload)
-        
-        if response.status_code == 201:
-            return response.json().get('url')
-        else:
-            st.error(f"Export failed (HTTP {response.status_code})")
+        # Step 1: Create export
+        with st.spinner(f"Generating {export_type.upper()} export..."):
+            response = requests.post(export_url, json=payload, headers=headers)
+            
+            if response.status_code != 201:
+                st.error(f"Export creation failed (HTTP {response.status_code})")
+                st.json(response.json())  # Show API error details
+                return None
+                
+        # Step 2: Download export
+        download_url = response.json().get('url')
+        if not download_url:
+            st.error("No download URL received")
             return None
+            
+        with st.spinner("Preparing download..."):
+            file_response = requests.get(download_url, headers=headers)
+            
+            if file_response.status_code == 200:
+                return {
+                    "content": file_response.content,
+                    "mime": {
+                        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        "csv": "text/csv",
+                        "spss_labels": "application/octet-stream"
+                    }[export_type],
+                    "extension": export_type if export_type != "spss_labels" else "sav"
+                }
+            else:
+                st.error(f"Download failed (HTTP {file_response.status_code})")
+                return None
+                
     except Exception as e:
         st.error(f"Export error: {str(e)}")
         return None
 
-def get_export_file(export_url):
-    """Download exported file from KoboToolbox"""
-    headers = {"Authorization": f"Token {KOBO_API_TOKEN}"}
-    try:
-        response = requests.get(export_url, headers=headers)
-        if response.status_code == 200:
-            return response.content
-        return None
-    except Exception as e:
-        st.error(f"Download error: {str(e)}")
-        return None
-
 # ==============================================
-# DATA FETCHING & PROCESSING
+# UI COMPONENTS
 # ==============================================
 
-@st.cache_data(ttl=3600)
-def fetch_kobo_data():
-    headers = {"Authorization": f"Token {KOBO_API_TOKEN}"}
-    
-    try:
-        response = requests.get(API_URL, headers=headers, timeout=30)
-        if response.status_code == 401:
-            st.error("401 Unauthorized - Please verify your API token")
-            return pd.DataFrame()
+def credential_form():
+    """Form for entering API credentials"""
+    with st.form("credentials"):
+        st.session_state.base_url = st.text_input(
+            "KoboToolbox Server URL",
+            value="https://kf.kobotoolbox.org"
+        )
+        st.session_state.form_uid = st.text_input(
+            "FORM_UID (from your form's URL)",
+            value="aJHsRZXT3XEpCoxn9Ct3qZ"
+        )
+        st.session_state.api_token = st.text_input(
+            "API Token (from https://kf.kobotoolbox.org/token/)",
+            type="password"
+        )
         
-        data = response.json().get("results", [])
-        return pd.DataFrame(data)
-    except Exception as e:
-        st.error(f"Data fetch error: {str(e)}")
-        return pd.DataFrame()
+        if st.form_submit_button("Connect"):
+            if test_connection():
+                st.success("Connected successfully!")
+                st.session_state.connected = True
+            else:
+                st.session_state.connected = False
 
-def clean_data(df):
-    if df.empty:
-        return df
+def export_buttons():
+    """Display export options after successful connection"""
+    col1, col2, col3 = st.columns(3)
     
-    # Convert date columns
-    for col in df.columns:
-        if 'date' in col.lower():
-            try:
-                df[col] = pd.to_datetime(df[col], errors='coerce')
-            except:
-                pass
-    return df
+    with col1:
+        if st.button("Export to Excel (XLSX)"):
+            export = generate_export("xlsx")
+            if export:
+                st.download_button(
+                    label="Download XLSX",
+                    data=export["content"],
+                    file_name=f"kobo_export.{export['extension']}",
+                    mime=export["mime"]
+                )
+    
+    with col2:
+        if st.button("Export to CSV"):
+            export = generate_export("csv")
+            if export:
+                st.download_button(
+                    label="Download CSV",
+                    data=export["content"],
+                    file_name=f"kobo_export.{export['extension']}",
+                    mime=export["mime"]
+                )
+    
+    with col3:
+        if st.button("Export to SPSS"):
+            export = generate_export("spss_labels")
+            if export:
+                st.download_button(
+                    label="Download SPSS",
+                    data=export["content"],
+                    file_name=f"kobo_export.{export['extension']}",
+                    mime=export["mime"]
+                )
 
 # ==============================================
-# MAIN DASHBOARD
+# MAIN APP
 # ==============================================
 
 def main():
-    st.title("📊 KoboToolbox Analytics Dashboard")
+    if 'connected' not in st.session_state:
+        st.session_state.connected = False
     
-    # Load data
-    df = fetch_kobo_data()
-    df = clean_data(df)
+    credential_form()
     
-    # Export Tab
-    with st.expander("⬇️ Direct Download from KoboToolbox", expanded=True):
-        st.markdown("""
-        ### Get original data directly from KoboToolbox
-        These exports maintain all form structure and media attachments
-        """)
+    if st.session_state.connected:
+        st.markdown("---")
+        export_buttons()
         
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("Export XLSX (Excel)"):
-                with st.spinner("Generating Excel export..."):
-                    export_url = trigger_kobo_export("xlsx")
-                    if export_url:
-                        file_content = get_export_file(export_url)
-                        if file_content:
-                            st.download_button(
-                                label="Download Excel",
-                                data=file_content,
-                                file_name="kobo_export.xlsx",
-                                mime="application/vnd.ms-excel"
-                            )
-        
-        with col2:
-            if st.button("Export CSV"):
-                with st.spinner("Generating CSV export..."):
-                    export_url = trigger_kobo_export("csv")
-                    if export_url:
-                        file_content = get_export_file(export_url)
-                        if file_content:
-                            st.download_button(
-                                label="Download CSV",
-                                data=file_content,
-                                file_name="kobo_export.csv",
-                                mime="text/csv"
-                            )
-        
-        with col3:
-            if st.button("Export SPSS"):
-                with st.spinner("Generating SPSS export..."):
-                    export_url = trigger_kobo_export("spss_labels")
-                    if export_url:
-                        file_content = get_export_file(export_url)
-                        if file_content:
-                            st.download_button(
-                                label="Download SPSS",
-                                data=file_content,
-                                file_name="kobo_export.sav",
-                                mime="application/octet-stream"
-                            )
-    
-    # Data Preview
-    if not df.empty:
-        st.subheader("Data Preview")
-        st.dataframe(df.head())
-        
-        # Visualizations would go here
-        # ...
-    else:
-        st.warning("No data available")
+        # Debug info
+        with st.expander("Technical Details"):
+            st.write(f"Form UID: {st.session_state.form_uid}")
+            st.write(f"API Token: {'*' * 20}{st.session_state.api_token[-4:]}")
+            st.write(f"Last checked: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
 if __name__ == "__main__":
     main()
