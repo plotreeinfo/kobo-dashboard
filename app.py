@@ -21,7 +21,7 @@ header {visibility: hidden;}
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # KoboToolbox API credentials - MUST UPDATE THESE
-KOBO_USERNAME = st.secrets.get("KOBO_USERNAME", "plotree")  # Your login email
+KOBO_USERNAME = st.secrets.get("KOBO_USERNAME", "admin@plotree.info")  # Your login email
 KOBO_API_TOKEN = st.secrets.get("KOBO_API_TOKEN", "04714621fa3d605ff0a4aa5cc2df7cfa961bf256")  # From Account Settings → API Tokens
 FORM_UID = st.secrets.get("FORM_UID", "aJHsRZXT3XEpCoxn9Ct3qZ")  # Find in form URL after /assets/
 BASE_URL = st.secrets.get("BASE_URL", "https://kf.kobotoolbox.org")  # Or your custom server
