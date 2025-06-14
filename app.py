@@ -23,9 +23,53 @@ KOBO_API_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
 FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
 BASE_URL = "https://kf.kobotoolbox.org"
 API_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
+EXPORT_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
 
 # ==============================================
-# IMPROVED DATA FETCHING WITH ERROR HANDLING
+# KOBOTOOLBOX EXPORT FUNCTIONS
+# ==============================================
+
+def trigger_kobo_export(export_type="xlsx"):
+    """Trigger export on KoboToolbox server"""
+    headers = {
+        "Authorization": f"Token {KOBO_API_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "type": export_type,
+        "fields_from_all_versions": "true",
+        "group_sep": "/",
+        "hierarchy_in_labels": "true",
+        "lang": "English"
+    }
+    
+    try:
+        response = requests.post(EXPORT_URL, headers=headers, json=payload)
+        
+        if response.status_code == 201:
+            return response.json().get('url')
+        else:
+            st.error(f"Export failed (HTTP {response.status_code})")
+            return None
+    except Exception as e:
+        st.error(f"Export error: {str(e)}")
+        return None
+
+def get_export_file(export_url):
+    """Download exported file from KoboToolbox"""
+    headers = {"Authorization": f"Token {KOBO_API_TOKEN}"}
+    try:
+        response = requests.get(export_url, headers=headers)
+        if response.status_code == 200:
+            return response.content
+        return None
+    except Exception as e:
+        st.error(f"Download error: {str(e)}")
+        return None
+
+# ==============================================
+# DATA FETCHING & PROCESSING
 # ==============================================
 
 @st.cache_data(ttl=3600)
@@ -35,128 +79,99 @@ def fetch_kobo_data():
     try:
         response = requests.get(API_URL, headers=headers, timeout=30)
         if response.status_code == 401:
-            st.error("401 Unauthorized - Please verify your API token is valid")
+            st.error("401 Unauthorized - Please verify your API token")
             return pd.DataFrame()
         
-        response.raise_for_status()
         data = response.json().get("results", [])
-        
-        if not data:
-            st.warning("No submissions found in this form")
         return pd.DataFrame(data)
-        
     except Exception as e:
         st.error(f"Data fetch error: {str(e)}")
         return pd.DataFrame()
 
-# ==============================================
-# SAFE DATA PROCESSING
-# ==============================================
-
-def safe_nunique(series):
-    """Handle nunique() for problematic columns"""
-    try:
-        return series.nunique()
-    except:
-        try:
-            return len(series.astype(str).unique())
-        except:
-            return 0
-
 def clean_data(df):
-    """Ensure all columns are filterable"""
     if df.empty:
         return df
     
-    # Convert date columns safely
+    # Convert date columns
     for col in df.columns:
         if 'date' in col.lower():
             try:
                 df[col] = pd.to_datetime(df[col], errors='coerce')
             except:
                 pass
-    
-    # Clean problematic columns
-    for col in df.columns:
-        try:
-            pd.to_numeric(df[col], errors='raise')
-        except:
-            df[col] = df[col].astype(str)
-    
     return df
 
 # ==============================================
-# ROBUST VISUALIZATION FUNCTIONS
-# ==============================================
-
-def create_safe_visualizations(df):
-    """Generate charts with error handling"""
-    if df.empty:
-        st.warning("No data available for visualizations")
-        return
-    
-    tab1, tab2 = st.tabs(["Charts", "Data"])
-    
-    with tab1:
-        # Get safe categorical columns
-        cat_cols = [col for col in df.columns 
-                   if safe_nunique(df[col]) < 20 
-                   and safe_nunique(df[col]) > 0]
-        
-        if cat_cols:
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                try:
-                    selected = st.selectbox("Pie Chart Category", cat_cols)
-                    fig = px.pie(df, names=selected)
-                    st.plotly_chart(fig, use_container_width=True)
-                except Exception as e:
-                    st.error(f"Couldn't create pie chart: {str(e)}")
-            
-            with col2:
-                try:
-                    selected = st.selectbox("Bar Chart Category", cat_cols)
-                    fig = px.histogram(df, x=selected)
-                    st.plotly_chart(fig, use_container_width=True)
-                except Exception as e:
-                    st.error(f"Couldn't create bar chart: {str(e)}")
-        
-        # Numeric visualizations
-        num_cols = df.select_dtypes(include=['number']).columns
-        if len(num_cols) > 0:
-            st.subheader("Numeric Data")
-            selected = st.selectbox("Select numeric column", num_cols)
-            try:
-                fig = px.histogram(df, x=selected)
-                st.plotly_chart(fig, use_container_width=True)
-            except Exception as e:
-                st.error(f"Couldn't create histogram: {str(e)}")
-    
-    with tab2:
-        st.dataframe(df, height=600)
-
-# ==============================================
-# MAIN APPLICATION
+# MAIN DASHBOARD
 # ==============================================
 
 def main():
     st.title("📊 KoboToolbox Analytics Dashboard")
     
-    # Load and clean data
+    # Load data
     df = fetch_kobo_data()
     df = clean_data(df)
     
-    if df.empty:
-        st.stop()
+    # Export Tab
+    with st.expander("⬇️ Direct Download from KoboToolbox", expanded=True):
+        st.markdown("""
+        ### Get original data directly from KoboToolbox
+        These exports maintain all form structure and media attachments
+        """)
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("Export XLSX (Excel)"):
+                with st.spinner("Generating Excel export..."):
+                    export_url = trigger_kobo_export("xlsx")
+                    if export_url:
+                        file_content = get_export_file(export_url)
+                        if file_content:
+                            st.download_button(
+                                label="Download Excel",
+                                data=file_content,
+                                file_name="kobo_export.xlsx",
+                                mime="application/vnd.ms-excel"
+                            )
+        
+        with col2:
+            if st.button("Export CSV"):
+                with st.spinner("Generating CSV export..."):
+                    export_url = trigger_kobo_export("csv")
+                    if export_url:
+                        file_content = get_export_file(export_url)
+                        if file_content:
+                            st.download_button(
+                                label="Download CSV",
+                                data=file_content,
+                                file_name="kobo_export.csv",
+                                mime="text/csv"
+                            )
+        
+        with col3:
+            if st.button("Export SPSS"):
+                with st.spinner("Generating SPSS export..."):
+                    export_url = trigger_kobo_export("spss_labels")
+                    if export_url:
+                        file_content = get_export_file(export_url)
+                        if file_content:
+                            st.download_button(
+                                label="Download SPSS",
+                                data=file_content,
+                                file_name="kobo_export.sav",
+                                mime="application/octet-stream"
+                            )
     
-    # Create visualizations
-    create_safe_visualizations(df)
-    
-    # Debug info
-    with st.expander("Technical Details"):
-        st.write(f"Data shape: {df.shape}")
-        st.write(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    # Data Preview
+    if not df.empty:
+        st.subheader("Data Preview")
+        st.dataframe(df.head())
+        
+        # Visualizations would go here
+        # ...
+    else:
+        st.warning("No data available")
 
 if __name__ == "__main__":
     main()
