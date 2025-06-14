@@ -20,11 +20,13 @@ header {visibility: hidden;}
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# KoboToolbox API credentials
-KOBO_USERNAME = "plotree"
-KOBO_PASSWORD = "Pl@tr33@123"
-FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
-BASE_URL = "https://kf.kobotoolbox.org"
+# KoboToolbox API credentials - MUST CONFIGURE THESE
+KOBO_USERNAME = "plotree"  # Replace with your username
+KOBO_PASSWORD = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"  # Replace with your API token (not password)
+FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"  # Replace with your form's asset UID
+BASE_URL = "https://kf.kobotoolbox.org"  # Replace if using a different server
+
+# API endpoints
 API_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
 EXPORT_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
 
@@ -34,39 +36,82 @@ EXPORT_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/exports/"
 
 @st.cache_data(ttl=3600)
 def fetch_kobo_data():
-    """Fetch raw data from KoboToolbox API"""
+    """Fetch raw data from KoboToolbox API with enhanced error handling"""
     try:
-        response = requests.get(API_URL, auth=HTTPBasicAuth(KOBO_USERNAME, KOBO_PASSWORD))
+        response = requests.get(
+            API_URL,
+            auth=HTTPBasicAuth(KOBO_USERNAME, KOBO_PASSWORD),
+            timeout=30
+        )
         response.raise_for_status()
+        
         data = response.json().get("results", [])
+        if not data:
+            st.warning("API returned empty results - no submissions found")
+            return pd.DataFrame()
+            
         return pd.DataFrame(data)
-    except Exception as e:
-        st.error(f"Failed to load data: {str(e)}")
+        
+    except requests.exceptions.RequestException as e:
+        st.error(f"Data fetch failed: {str(e)}")
+        st.info("Troubleshooting steps:")
+        st.info("1. Verify your API token is correct")
+        st.info("2. Check the form UID is accurate")
+        st.info("3. Ensure you have internet access")
         return pd.DataFrame()
 
 def trigger_kobo_export(export_type="xls"):
-    """Trigger a proper KoboToolbox export"""
-    headers = {'Authorization': f'Token {KOBO_PASSWORD}'}
-    payload = {
-        "type": export_type,
-        "fields_from_all_versions": "true",
-        "group_sep": "/",
-        "hierarchy_in_labels": "true",
-        "include_media_urls": "true",
-        "lang": "English"
-    }
-    response = requests.post(EXPORT_URL, headers=headers, json=payload)
-    if response.status_code == 201:
-        return response.json().get('url')
-    return None
+    """Trigger a KoboToolbox export with robust error handling"""
+    try:
+        headers = {
+            'Authorization': f'Token {KOBO_PASSWORD}',
+            'Content-Type': 'application/json'
+        }
+        
+        payload = {
+            "type": export_type,
+            "fields_from_all_versions": "true",
+            "group_sep": "/",
+            "hierarchy_in_labels": "true",
+            "include_media_urls": "true",
+            "lang": "English"
+        }
+        
+        response = requests.post(
+            EXPORT_URL,
+            headers=headers,
+            json=payload,
+            timeout=30
+        )
+        
+        if response.status_code == 201:
+            return response.json().get('url')
+        else:
+            st.error(f"Export failed with status {response.status_code}")
+            if response.status_code == 403:
+                st.error("Permission denied - check your API token has export rights")
+            return None
+            
+    except Exception as e:
+        st.error(f"Export request failed: {str(e)}")
+        return None
 
 def check_export_status(export_url):
-    """Check status of a KoboToolbox export"""
-    headers = {'Authorization': f'Token {KOBO_PASSWORD}'}
-    response = requests.get(export_url, headers=headers)
-    if response.status_code == 200:
-        return response.json().get('status'), response.json().get('result')
-    return None, None
+    """Check status of a KoboToolbox export with retry logic"""
+    try:
+        headers = {'Authorization': f'Token {KOBO_PASSWORD}'}
+        response = requests.get(export_url, headers=headers, timeout=30)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return data.get('status'), data.get('result')
+        else:
+            st.warning(f"Status check failed with code {response.status_code}")
+            return None, None
+            
+    except Exception as e:
+        st.warning(f"Status check error: {str(e)}")
+        return None, None
 
 # ==============================================
 # DASHBOARD LAYOUT
@@ -76,7 +121,7 @@ def check_export_status(export_url):
 df = fetch_kobo_data()
 
 if df.empty:
-    st.warning("No data available - please check your connection")
+    st.warning("No data available - cannot proceed")
     st.stop()
 
 # Standardize column names
@@ -179,7 +224,7 @@ st.subheader("🔍 Data Preview")
 st.dataframe(df.head(1000), use_container_width=True)
 
 # ==============================================
-# KOBOTOOLBOX EXPORT SECTION - FIXED VERSION
+# KOBOTOOLBOX EXPORT SECTION
 # ==============================================
 
 st.subheader("📥 Download Data")
@@ -199,54 +244,63 @@ if 'export_result_url' not in st.session_state:
     st.session_state.export_result_url = None
 if 'export_start_time' not in st.session_state:
     st.session_state.export_start_time = None
+if 'export_retry_count' not in st.session_state:
+    st.session_state.export_retry_count = 0
 
 # Export Button
 if st.button("Generate KoboToolbox Export"):
     st.session_state.export_start_time = time.time()
-    with st.spinner("Requesting export from KoboToolbox..."):
-        # Determine export type
+    st.session_state.export_retry_count = 0
+    st.session_state.export_status = "processing"
+    
+    with st.spinner("Initiating export..."):
         export_type = "xls" if export_format == "Excel (XLS)" else "csv"
-        
-        # Trigger export
         export_url = trigger_kobo_export(export_type)
         
         if export_url:
             st.session_state.export_url = export_url
-            st.session_state.export_status = "processing"
-            st.success("Export requested! Checking status...")
+            st.success("Export initiated! Checking status...")
         else:
-            st.error("Failed to initiate export")
+            st.session_state.export_status = "error"
 
-# Check export status periodically if processing
+# Status checking
 if st.session_state.export_status == "processing":
     current_time = time.time()
-    # Only check status every 10 seconds (Kobo exports can take time)
-    if current_time - st.session_state.export_start_time > 10:
+    
+    # Only check status every 15 seconds to avoid rate limiting
+    if current_time - st.session_state.export_start_time > 15:
         with st.spinner("Checking export status..."):
             status, result_url = check_export_status(st.session_state.export_url)
             
             if status == "complete":
                 st.session_state.export_status = "complete"
                 st.session_state.export_result_url = result_url
-                st.success("Export ready for download!")
+                st.rerun()
             elif status == "error":
-                st.session_state.export_status = "error"
-                st.error("Export failed - please try again")
+                st.session_state.export_retry_count += 1
+                if st.session_state.export_retry_count < 3:
+                    st.warning("Temporary issue, retrying...")
+                    st.session_state.export_start_time = current_time
+                    time.sleep(5)
+                    st.rerun()
+                else:
+                    st.session_state.export_status = "error"
+                    st.error("Export failed after multiple attempts")
             else:
-                # Schedule another check
+                # Still processing
                 st.session_state.export_start_time = current_time
                 st.rerun()
 
-# Show download link when export is ready
+# Show download link when ready
 if st.session_state.export_status == "complete" and st.session_state.export_result_url:
+    st.success("✅ Export ready!")
     st.markdown(
         f"""
-        ### Your export is ready!
-        [Click here to download {export_format} file]({BASE_URL}{st.session_state.export_result_url})
-        """,
-        unsafe_allow_html=True
+        ### Download your {export_format} file:
+        [Click here to download]({BASE_URL}{st.session_state.export_result_url})
+        """
     )
-    st.markdown("This link will be valid for 24 hours from the KoboToolbox server.")
+    st.info("Note: This link is valid for 24 hours from KoboToolbox")
 
 # ==============================================
 # VISUALIZATIONS
@@ -258,59 +312,33 @@ st.subheader("📊 Visualizations")
 if "submission_date" in df.columns:
     st.markdown("### Submission Trends")
     
-    # Frequency selector
     freq = st.selectbox("Display frequency", ["Daily", "Weekly", "Monthly"])
     
-    # Initialize grouping column
-    group_col = None
-    
-    # Set up proper grouping based on frequency
     if freq == "Daily":
-        df["submission_day"] = df["submission_date"].dt.date
-        group_col = "submission_day"
+        df["time_period"] = df["submission_date"].dt.date
     elif freq == "Weekly":
-        df["submission_week"] = df["submission_date"].dt.strftime('%Y-W%U')
-        group_col = "submission_week"
-    elif freq == "Monthly":
-        df["submission_month"] = df["submission_date"].dt.strftime('%Y-%m')
-        group_col = "submission_month"
+        df["time_period"] = df["submission_date"].dt.to_period('W').dt.start_time
+    else:  # Monthly
+        df["time_period"] = df["submission_date"].dt.to_period('M').dt.start_time
     
-    # Only proceed if we have a valid grouping column
-    if group_col and group_col in df.columns:
-        try:
-            # Group and count submissions
-            trend_data = df.groupby(group_col, as_index=False).size()
-            trend_data = trend_data.rename(columns={'size': 'count'})
-            
-            # Sort by date (important for weekly/monthly)
-            if freq == "Weekly":
-                trend_data[group_col] = pd.to_datetime(trend_data[group_col] + '-1', format='%Y-W%U-%w')
-            elif freq == "Monthly":
-                trend_data[group_col] = pd.to_datetime(trend_data[group_col])
-            
-            trend_data = trend_data.sort_values(group_col)
-            
-            # Create and display plot using Plotly Express
-            fig = px.line(trend_data, x=group_col, y='count',
-                         title=f"Submissions by {freq}",
-                         labels={'count': 'Number of Submissions'})
-            
-            # Format x-axis for better readability
-            if freq == "Daily":
-                fig.update_xaxes(tickformat="%b %d, %Y")
-            elif freq == "Weekly":
-                fig.update_xaxes(tickformat="%b %d, %Y")
-            elif freq == "Monthly":
-                fig.update_xaxes(tickformat="%b %Y")
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-        except Exception as e:
-            st.error(f"Error generating trend visualization: {str(e)}")
-    else:
-        st.warning("Could not determine proper grouping for trends")
-else:
-    st.warning("Submission date information not available in this dataset")
+    trend_data = df.groupby("time_period").size().reset_index(name='count')
+    
+    fig = px.line(
+        trend_data,
+        x="time_period",
+        y="count",
+        title=f"Submissions by {freq}",
+        labels={'count': 'Number of Submissions'}
+    )
+    
+    if freq == "Daily":
+        fig.update_xaxes(tickformat="%b %d, %Y")
+    elif freq == "Weekly":
+        fig.update_xaxes(tickformat="%b %d, %Y")
+    else:  # Monthly
+        fig.update_xaxes(tickformat="%b %Y")
+    
+    st.plotly_chart(fig, use_container_width=True)
 
 # ==============================================
 # FOOTER
@@ -323,7 +351,6 @@ st.markdown("""
 - Professional filtering options
 - Official KoboToolbox export functionality
 - Interactive visualizations
-- Data quality indicators
 """)
 
 st.success("✅ Dashboard ready with all functionality working properly")
