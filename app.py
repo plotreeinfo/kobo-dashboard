@@ -18,9 +18,9 @@ header {visibility: hidden;}
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# YOUR CREDENTIALS (REPLACE WITH ACTUAL VALUES)
-KOBO_API_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
-FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
+# YOUR CREDENTIALS
+KOBO_API_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"  # Replace with your actual token
+FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"  # Replace with your form UID
 BASE_URL = "https://kf.kobotoolbox.org"
 
 # API endpoints
@@ -64,7 +64,7 @@ def fetch_kobo_data():
         if data_response.status_code == 401:
             st.error("""
             🔐 Authentication Failed - Verify:
-            1. API Token is correct and recent
+            1. API Token is correct (generated within last 6 months)
             2. You have 'View Submissions' permission
             3. FORM_UID matches your form's URL
             """)
@@ -116,18 +116,18 @@ def handle_kobo_export(export_type):
         "Content-Type": "application/json"
     }
     
-    # CORRECTLY FORMATTED PAYLOAD
+    # CORRECTLY FORMATED PAYLOAD (using proper booleans)
     payload = {
         "type": export_type,
-        "fields_from_all_versions": True,  # Must be boolean, not string
-        "hierarchy_in_labels": True,       # Must be boolean, not string
+        "fields_from_all_versions": True,  # Boolean, not string
+        "hierarchy_in_labels": True,       # Boolean, not string
         "group_sep": "/",
         "lang": "English"
     }
     
     try:
         # Step 1: Initiate export
-        with st.spinner(f"Requesting {export_type.upper()} export..."):
+        with st.spinner(f"Creating {export_type.upper()} export..."):
             response = requests.post(
                 EXPORT_URL,
                 headers=headers,
@@ -138,10 +138,12 @@ def handle_kobo_export(export_type):
             if response.status_code == 400:
                 st.error("""
                 ❌ Bad Request - Verify:
-                1. Your token has export permissions (check at kf.kobotoolbox.org/token/)
+                1. Your token has export permissions
                 2. The form has submissions
-                3. All boolean values are True/False (not "true"/"false")
+                3. All boolean values are True/False (not strings)
                 """)
+                if response.text:
+                    st.json(response.json())  # Show API error details
                 return None
                 
             if response.status_code != 201:
@@ -187,7 +189,7 @@ def handle_kobo_export(export_type):
         return None
 
 # ==============================================
-# SAFE DASHBOARD COMPONENTS
+# DASHBOARD COMPONENTS
 # ==============================================
 
 def create_filters(df):
