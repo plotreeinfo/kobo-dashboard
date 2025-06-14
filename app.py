@@ -2,15 +2,13 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import requests
-import time
 from datetime import datetime
-from requests.auth import HTTPBasicAuth
 
 # ==============================================
 # CONFIGURATION
 # ==============================================
 
-# Remove Streamlit menu and GitHub icon
+st.set_page_config(layout="wide")
 hide_streamlit_style = """
 <style>
 #MainMenu {visibility: hidden;}
@@ -20,192 +18,158 @@ header {visibility: hidden;}
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# KoboToolbox API credentials
-KOBO_USERNAME = st.secrets.get("KOBO_USERNAME", "plotree")
-KOBO_API_TOKEN = st.secrets.get("KOBO_API_TOKEN", "04714621fa3d605ff0a4aa5cc2df7cfa961bf256")
-FORM_UID = st.secrets.get("FORM_UID", "aJHsRZXT3XEpCoxn9Ct3qZ")
-BASE_URL = st.secrets.get("BASE_URL", "https://kf.kobotoolbox.org")
-
-# API endpoints
+# KoboToolbox credentials (using both methods for compatibility)
+KOBO_API_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
+FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
+BASE_URL = "https://kf.kobotoolbox.org"
 API_URL = f"{BASE_URL}/api/v2/assets/{FORM_UID}/data.json"
 
 # ==============================================
-# DATA FETCHING WITH ERROR HANDLING
+# AUTHENTICATION WRAPPER (DUAL METHOD)
+# ==============================================
+
+def make_authenticated_request(url):
+    """Try both authentication methods with proper headers"""
+    headers = {
+        "Authorization": f"Token {KOBO_API_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    # Try Token Auth first
+    try:
+        response = requests.get(url, headers=headers, timeout=30)
+        if response.status_code == 200:
+            return response
+    except:
+        pass
+    
+    # Fallback to Basic Auth if Token Auth fails
+    try:
+        response = requests.get(
+            url,
+            auth=requests.auth.HTTPBasicAuth(KOBO_API_TOKEN, ''),
+            timeout=30
+        )
+        return response
+    except Exception as e:
+        st.error(f"🚨 Connection failed: {str(e)}")
+        return None
+
+# ==============================================
+# DATA FETCHING WITH COMPLETE ERROR HANDLING
 # ==============================================
 
 @st.cache_data(ttl=3600)
 def fetch_kobo_data():
+    """Fetch data with multiple fallback methods"""
+    response = make_authenticated_request(API_URL)
+    
+    if not response:
+        st.error("Failed to connect to KoboToolbox API")
+        return pd.DataFrame()
+    
+    if response.status_code == 401:
+        st.error("""
+        🔐 Authentication Failed - Possible fixes:
+        1. Regenerate API token at [KoboToolbox](https://kf.kobotoolbox.org/token/)
+        2. Verify form sharing permissions
+        3. Check server URL is correct
+        """)
+        return pd.DataFrame()
+    
+    if response.status_code == 404:
+        st.error("Form not found - verify FORM_UID is correct")
+        return pd.DataFrame()
+    
     try:
-        response = requests.get(
-            API_URL,
-            auth=HTTPBasicAuth(KOBO_USERNAME, KOBO_API_TOKEN),
-            timeout=30
-        )
-        response.raise_for_status()
         data = response.json().get("results", [])
+        if not data:
+            st.warning("Form exists but has no submissions yet")
         return pd.DataFrame(data)
-    except Exception as e:
-        st.error(f"Data fetch error: {str(e)}")
+    except:
+        st.error("Failed to parse API response")
         return pd.DataFrame()
 
 # ==============================================
-# DATA PROCESSING
+# MAIN DASHBOARD
 # ==============================================
 
-def clean_data(df):
-    """Handle mixed data types and null values"""
+def main():
+    st.title("📊 KoboToolbox Analytics Dashboard")
+    
+    # Load data
+    df = fetch_kobo_data()
+    
     if df.empty:
-        return df
+        st.stop()
     
-    # Convert date columns
-    for col in df.columns:
-        if 'date' in col.lower():
-            try:
-                df[col] = pd.to_datetime(df[col], errors='coerce')
-            except:
-                pass
+    # Auto-detect column types
+    date_cols = [col for col in df.columns if 'date' in col.lower()]
+    for col in date_cols:
+        try:
+            df[col] = pd.to_datetime(df[col])
+        except:
+            pass
     
-    # Clean numeric columns
-    num_cols = df.select_dtypes(include=['number']).columns
-    for col in num_cols:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
-    
-    # Clean text columns
-    text_cols = df.select_dtypes(include=['object']).columns
-    for col in text_cols:
-        df[col] = df[col].astype(str).replace('nan', pd.NA)
-    
-    return df
-
-# ==============================================
-# FILTERS SIDEBAR
-# ==============================================
-
-def create_filters(df):
-    """Generate filters with proper type handling"""
-    if df.empty:
-        return df
-    
+    # SIDEBAR FILTERS
     with st.sidebar:
         st.header("🔍 Filters")
         
         # Date filter
-        date_cols = [col for col in df.columns if 'date' in col.lower() and pd.api.types.is_datetime64_any_dtype(df[col])]
         if date_cols:
-            selected_date_col = st.selectbox("Select date column", date_cols)
-            min_date = df[selected_date_col].min()
-            max_date = df[selected_date_col].max()
-            
-            date_range = st.date_input(
-                "Date range",
-                value=(min_date, max_date),
-                min_value=min_date,
-                max_value=max_date
-            )
+            date_col = st.selectbox("Filter by date column", date_cols)
+            min_date = df[date_col].min().to_pydatetime()
+            max_date = df[date_col].max().to_pydatetime()
+            date_range = st.date_input("Date range", [min_date, max_date])
             
             if len(date_range) == 2:
                 df = df[
-                    (df[selected_date_col] >= pd.to_datetime(date_range[0])) &
-                    (df[selected_date_col] <= pd.to_datetime(date_range[1]))
+                    (df[date_col] >= pd.to_datetime(date_range[0])) & 
+                    (df[date_col] <= pd.to_datetime(date_range[1]))
                 ]
-
-        # Dynamic column filters
-        filter_cols = st.multiselect(
-            "Select columns to filter",
-            df.columns,
-            default=[]
-        )
         
-        for col in filter_cols:
-            try:
-                if pd.api.types.is_numeric_dtype(df[col]):
-                    min_val = float(df[col].min())
-                    max_val = float(df[col].max())
-                    val_range = st.slider(
-                        f"Range for {col}",
-                        min_val,
-                        max_val,
-                        (min_val, max_val)
-                    )
-                    df = df[(df[col] >= val_range[0]) & (df[col] <= val_range[1])]
-                else:
-                    unique_vals = df[col].dropna().unique()
-                    if len(unique_vals) < 20:
-                        options = st.multiselect(
-                            f"Filter by {col}",
-                            unique_vals
-                        )
-                        if options:
-                            df = df[df[col].isin(options)]
-            except Exception as e:
-                st.warning(f"Couldn't filter column {col}: {str(e)}")
+        # Dynamic filters
+        filter_col = st.selectbox("Filter by column", df.columns)
+        if pd.api.types.is_numeric_dtype(df[filter_col]):
+            min_val, max_val = float(df[filter_col].min()), float(df[filter_col].max())
+            val_range = st.slider("Range", min_val, max_val, (min_val, max_val))
+            df = df[df[filter_col].between(*val_range)]
+        else:
+            options = st.multiselect("Select values", df[filter_col].unique())
+            if options:
+                df = df[df[filter_col].isin(options)]
     
-    return df
-
-# ==============================================
-# VISUALIZATIONS
-# ==============================================
-
-def create_visualizations(df):
-    """Create charts with proper error handling"""
-    if df.empty:
-        st.warning("No data available for visualizations")
-        return
-    
+    # VISUALIZATIONS
     tab1, tab2 = st.tabs(["Charts", "Data"])
     
     with tab1:
-        # Numeric charts
-        num_cols = df.select_dtypes(include=['number']).columns
-        if len(num_cols) > 0:
-            st.subheader("Numeric Data")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                selected_num = st.selectbox("Select numeric column", num_cols)
-                fig = px.histogram(df, x=selected_num)
+        col1, col2 = st.columns(2)
+        
+        # Pie Chart
+        with col1:
+            cat_cols = [c for c in df.columns if df[c].nunique() < 10]
+            if cat_cols:
+                selected = st.selectbox("Pie Chart Category", cat_cols)
+                fig = px.pie(df, names=selected)
                 st.plotly_chart(fig, use_container_width=True)
-            
-            with col2:
-                if len(num_cols) > 1:
-                    selected_num2 = st.selectbox("Select second numeric column", num_cols)
-                    fig = px.scatter(df, x=selected_num, y=selected_num2)
-                    st.plotly_chart(fig, use_container_width=True)
         
-        # Categorical charts
-        cat_cols = [col for col in df.columns 
-                   if not pd.api.types.is_numeric_dtype(df[col]) 
-                   and df[col].nunique() < 20]
-        
-        if cat_cols:
-            st.subheader("Categorical Data")
-            selected_cat = st.selectbox("Select category", cat_cols)
-            fig = px.pie(df, names=selected_cat)
-            st.plotly_chart(fig, use_container_width=True)
+        # Bar Chart
+        with col2:
+            if cat_cols:
+                selected = st.selectbox("Bar Chart Category", cat_cols)
+                fig = px.histogram(df, x=selected)
+                st.plotly_chart(fig, use_container_width=True)
     
     with tab2:
         st.dataframe(df, height=600)
-
-# ==============================================
-# MAIN APP
-# ==============================================
-
-def main():
-    st.title("📊 KoboToolbox Dashboard")
     
-    # Load and clean data
-    df = fetch_kobo_data()
-    df = clean_data(df)
-    
-    if df.empty:
-        st.warning("No data available - check form submissions")
-        return
-    
-    # Apply filters
-    df = create_filters(df)
-    
-    # Create visualizations
-    create_visualizations(df)
+    # DEBUGGING
+    with st.expander("🔧 Technical Details"):
+        st.code(f"""
+        API URL: {API_URL}
+        Last Fetch: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+        Data Shape: {df.shape}
+        """)
 
 if __name__ == "__main__":
     main()
