@@ -3,13 +3,15 @@ import pandas as pd
 import requests
 from io import BytesIO
 
-# Your KoBo credentials
+# ———————————————————
+# ⚙️ KoBo settings
 KOBO_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
 FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
 BASE_URL = "https://kf.kobotoolbox.org"
 HEADERS = {"Authorization": f"Token {KOBO_TOKEN}"}
 
-# Safely get JSON response
+# ———————————————————
+# 🔍 Safe JSON response function
 def get_json_response(url):
     try:
         resp = requests.get(url, headers=HEADERS)
@@ -23,7 +25,8 @@ def get_json_response(url):
         st.error(f"❌ KoBo returned non-JSON (likely HTML). URL: {url}")
     return None
 
-# Fetch export settings
+# ———————————————————
+# 📥 Get export setting
 def get_export_setting():
     url = f"{BASE_URL}/api/v2/assets/{FORM_UID}/export-settings/"
     data = get_json_response(url)
@@ -32,7 +35,8 @@ def get_export_setting():
         return None
     return data["results"][0]
 
-# Download exported XLSX/CSV
+# ———————————————————
+# ⬇️ Download exported XLSX/CSV
 def download_exported_data():
     setting = get_export_setting()
     if not setting:
@@ -47,4 +51,6 @@ def download_exported_data():
         res = requests.get(data_url, headers=HEADERS)
         res.raise_for_status()
         df = pd.read_excel(BytesIO(res.content))
-        unwanted = ["start", "end", "_id",_]()
+        # ✅ Remove metadata columns
+        unwanted = [
+            "start", "end", "_id", "_uuid", "_validation_status",
