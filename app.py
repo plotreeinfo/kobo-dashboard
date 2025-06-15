@@ -52,5 +52,10 @@ def download_exported_data():
         res.raise_for_status()
         df = pd.read_excel(BytesIO(res.content))
 
-        # ✅ Remove metadata columns
+              # ✅ Remove metadata columns
         unwanted = [
+            "start", "end", "_id", "_uuid", "_validation_status",
+            "_notes", "_status", "_submitted_by", "_tags", "__version__"
+        ]
+        df.drop(columns=[col for col in unwanted if col in df.columns], inplace=True)
+
