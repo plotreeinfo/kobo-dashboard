@@ -1,4 +1,2 @@
 streamlit==1.33.0
-pandas==2.2.2
-requests==2.31.0
-openpyxl==3.1.2  # Only needed for Excel uploads
+pandas==2.0.3
