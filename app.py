@@ -53,4 +53,6 @@ def download_exported_data():
         df = pd.read_excel(BytesIO(res.content))
         # ✅ Remove metadata columns
         unwanted = [
-            "start", "end", "_id", "_uuid", "_validation_status",
+    "start", "end", "_id", "_uuid", "_validation_status",
+    "_notes", "_status", "_submitted_by", "_tags", "__version__"
+]
