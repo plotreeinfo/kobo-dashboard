@@ -26,9 +26,23 @@ def fetch_kobo_data():
         return None
 
 # Fetch data
-df = fetch_kobo_data()
-if df is not None and not df.empty:
-    st.success("✅ Data loaded successfully!")
+@st.cache_data(show_spinner=True)
+def fetch_kobo_data():
+    headers = {"Authorization": f"Token {KOBO_TOKEN}"}
+    try:
+        response = requests.get(EXPORT_URL, headers=headers)
+        response.raise_for_status()
+        df = pd.read_excel(BytesIO(response.content))
+        df = df.loc[:, ~df.columns.str.contains("^Unnamed")]  # Remove unnamed columns
+        df = df.dropna(axis=1, how='all')  # Drop completely empty columns
+        return df
+    except requests.exceptions.RequestException as e:
+        st.error(f"❌ Request failed: {e}")
+        return None
+    except Exception as e:
+        st.error(f"❌ Unexpected error: {e}")
+        return None
+
 
     # Filter UI
     st.subheader("🔍 Filter Data")
