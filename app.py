@@ -3,14 +3,24 @@ import pandas as pd
 import requests
 from io import BytesIO
 
-# ——— KoBo API settings ———
+# ——— KoBo API Settings ———
 KOBO_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
 FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
 BASE_URL = "https://kf.kobotoolbox.org"
 HEADERS = {"Authorization": f"Token {KOBO_TOKEN}"}
 
+st.set_page_config("KoBo Dashboard", layout="wide")
+st.title("📋 KoBoToolbox Form Data Viewer")
+
+
+# ——— Debug Print Function ———
+def log(msg):
+    st.markdown(f"🪵 `{msg}`")
+
+
 # ——— Safe JSON GET ———
 def get_json_response(url):
+    log(f"🔗 Fetching: {url}")
     try:
         resp = requests.get(url, headers=HEADERS)
         resp.raise_for_status()
@@ -20,31 +30,36 @@ def get_json_response(url):
     except requests.exceptions.RequestException as e:
         st.error(f"❌ Request failed: {e}")
     except ValueError:
-        st.error("❌ KoBo returned HTML instead of JSON.")
+        st.error("❌ KoBo returned non-JSON (likely HTML error).")
     return None
+
 
 # ——— Get Export Setting ———
 def get_export_setting():
     url = f"{BASE_URL}/api/v2/assets/{FORM_UID}/export-settings/"
     data = get_json_response(url)
-    if data and "results" in data and data["results"]:
-        return data["results"][0]
-    else:
-        st.warning("⚠️ No export setting found — export manually once via KoBo.")
+    if not data:
+        log("❌ No export-setting response")
         return None
+
+    log(f"✅ Export settings found: {len(data.get('results', []))}")
+    if data.get("results"):
+        return data["results"][0]
+    return None
+
 
 # ——— Download Exported Data ———
 def download_exported_data():
     setting = get_export_setting()
     if not setting:
+        log("⚠️ No export settings found — maybe not created yet?")
         return pd.DataFrame()
 
     data_url = setting.get("data_url_xlsx") or setting.get("data_url_csv")
+    log(f"📁 Data download URL: {data_url}")
     if not data_url:
-        st.warning("⚠️ No export URL found.")
+        st.warning("⚠️ Export found but no data download URL available.")
         return pd.DataFrame()
-
-    st.info(f"🔗 Export URL: {data_url}")
 
     try:
         res = requests.get(data_url, headers=HEADERS)
@@ -55,7 +70,9 @@ def download_exported_data():
         else:
             df = pd.read_csv(BytesIO(res.content))
 
-        # Remove metadata columns
+        log(f"📊 Rows Loaded: {len(df)}")
+
+        # Remove unwanted metadata
         unwanted = [
             "start", "end", "_id", "_uuid", "_validation_status",
             "_notes", "_status", "_submitted_by", "_tags", "__version__"
@@ -64,9 +81,17 @@ def download_exported_data():
         return df
 
     except Exception as e:
-        st.error(f"❌ Failed to fetch or read data: {e}")
+        st.error(f"❌ Failed to load data: {e}")
         return pd.DataFrame()
 
-# ——— Streamlit UI ———
-st.set_page_config("KoBo Dashboard", layout="wide")
-st.title("📋 KoBoToolbox Form Data Viewer")
+
+# ——— Main App Flow ———
+with st.spinner("⏳ Fetching data..."):
+    df = download_exported_data()
+
+if df is not None and not df.empty:
+    st.success(f"✅ Loaded {len(df)} records")
+    col = st.selectbox("Filter column", df.columns)
+    text = st.text_input("Enter text to filter (optional)")
+    if text:
+        df = df[df[col].astype(str).str.contains(text, case=F]()
