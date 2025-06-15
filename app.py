@@ -3,104 +3,64 @@ import pandas as pd
 import requests
 from io import BytesIO
 
-# ——— KoBo API Settings ———
+# --- Settings ---
 KOBO_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
 FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
 BASE_URL = "https://kf.kobotoolbox.org"
 HEADERS = {"Authorization": f"Token {KOBO_TOKEN}"}
 
-st.set_page_config("KoBo Dashboard", layout="wide")
-st.title("📋 KoBoToolbox Form Data Viewer")
+st.set_page_config("KoBo Debug Dashboard", layout="wide")
+st.title("🛠️ KoBo Debug Viewer")
 
-
-# ——— Debug Print Function ———
 def log(msg):
-    st.markdown(f"🪵 `{msg}`")
+    st.markdown(f"**🪵 {msg}**")
 
+# --- Step 1: Fetch export-settings ---
+url_settings = f"{BASE_URL}/api/v2/assets/{FORM_UID}/export-settings/"
+log(f"Fetch Export Settings URL: {url_settings}")
+resp = requests.get(url_settings, headers=HEADERS)
+log(f"HTTP Status Code: {resp.status_code}")
+try:
+    data = resp.json()
+    log("Export Settings JSON:")
+    st.json(data)
+except Exception as e:
+    log(f"❌ JSON parsing error: {e}")
+    st.text(resp.text[:500])
+    st.stop()
 
-# ——— Safe JSON GET ———
-def get_json_response(url):
-    log(f"🔗 Fetching: {url}")
-    try:
-        resp = requests.get(url, headers=HEADERS)
-        resp.raise_for_status()
-        return resp.json()
-    except requests.exceptions.HTTPError as e:
-        st.error(f"❌ HTTP Error: {e}")
-    except requests.exceptions.RequestException as e:
-        st.error(f"❌ Request failed: {e}")
-    except ValueError:
-        st.error("❌ KoBo returned non-JSON (likely HTML error).")
-    return None
+results = data.get("results", [])
+if not results:
+    log("❌ 'results' is empty – no export-settings found.")
+    st.stop()
 
+# --- Step 2: Use the first export setting ---
+setting = results[0]
+log(f"Using export setting UID: {setting.get('uid')}")
+log("Full export setting object:")
+st.json(setting)
 
-# ——— Get Export Setting ———
-def get_export_setting():
-    url = f"{BASE_URL}/api/v2/assets/{FORM_UID}/export-settings/"
-    data = get_json_response(url)
-    if not data:
-        log("❌ No export-setting response")
-        return None
+# --- Step 3: Extract download URL and fetch data ---
+data_url = setting.get("data_url_xlsx") or setting.get("data_url_csv")
+if not data_url:
+    log("❌ No 'data_url_xlsx' or 'data_url_csv' found.")
+    st.stop()
 
-    log(f"✅ Export settings found: {len(data.get('results', []))}")
-    if data.get("results"):
-        return data["results"][0]
-    return None
+log(f"Data Download URL: {data_url}")
+resp2 = requests.get(data_url, headers=HEADERS)
+log(f"Download HTTP Status Code: {resp2.status_code}")
+if resp2.status_code != 200:
+    st.text(resp2.text[:500])
+    st.stop()
 
-
-# ——— Download Exported Data ———
-def download_exported_data():
-    setting = get_export_setting()
-    if not setting:
-        log("⚠️ No export settings found — maybe not created yet?")
-        return pd.DataFrame()
-
-    data_url = setting.get("data_url_xlsx") or setting.get("data_url_csv")
-    log(f"📁 Data download URL: {data_url}")
-    if not data_url:
-        st.warning("⚠️ Export found but no data download URL available.")
-        return pd.DataFrame()
-
-    try:
-        res = requests.get(data_url, headers=HEADERS)
-        res.raise_for_status()
-
-        if "xlsx" in data_url:
-            df = pd.read_excel(BytesIO(res.content))
-        else:
-            df = pd.read_csv(BytesIO(res.content))
-
-        log(f"📊 Rows Loaded: {len(df)}")
-
-        # Remove unwanted metadata
-        unwanted = [
-            "start", "end", "_id", "_uuid", "_validation_status",
-            "_notes", "_status", "_submitted_by", "_tags", "__version__"
-        ]
-        df.drop(columns=[col for col in unwanted if col in df.columns], inplace=True)
-        return df
-
-    except Exception as e:
-        st.error(f"❌ Failed to load data: {e}")
-        return pd.DataFrame()
-
-
-# ——— Main App Flow ———
-with st.spinner("⏳ Fetching data..."):
-    df = download_exported_data()
-
-if df is not None and not df.empty:
-    st.success(f"✅ Loaded {len(df)} records")
-    
-    col = st.selectbox("🔍 Filter by column", df.columns)
-    text = st.text_input("Enter text to filter")
-    
-    if text:
-        df = df[df[col].astype(str).str.contains(text, case=False, na=False)]
-
-    st.dataframe(df, use_container_width=True)
-    st.download_button("⬇️ Download CSV", df.to_csv(index=False), "data.csv", "text/csv")
-    st.download_button("⬇️ Download Excel", df.to_excel(index=False), "data.xlsx", "application/vnd.ms-excel")
-
-else:
-    st.warning("⚠️ No data found or export is missing.")
+# --- Step 4: Try reading into DataFrame ---
+try:
+    if "xlsx" in data_url:
+        df = pd.read_excel(BytesIO(resp2.content))
+    else:
+        df = pd.read_csv(BytesIO(resp2.content))
+    log(f"📊 Loaded DataFrame with {len(df)} rows and {len(df.columns)} columns")
+    st.dataframe(df)
+except Exception as e:
+    log(f"❌ Error parsing data file: {e}")
+    st.stop()
