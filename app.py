@@ -3,15 +3,13 @@ import pandas as pd
 import requests
 from io import BytesIO
 
-# ———————————————————
-# ⚙️ KoBo settings
+# ——— KoBo API settings ———
 KOBO_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
 FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
 BASE_URL = "https://kf.kobotoolbox.org"
 HEADERS = {"Authorization": f"Token {KOBO_TOKEN}"}
 
-# ———————————————————
-# 🔍 Safe JSON response function
+# ——— JSON-safe GET function ———
 def get_json_response(url):
     try:
         resp = requests.get(url, headers=HEADERS)
@@ -22,52 +20,19 @@ def get_json_response(url):
     except requests.exceptions.RequestException as e:
         st.error(f"❌ Request failed: {e}")
     except ValueError:
-        st.error(f"❌ KoBo returned non-JSON (likely HTML). URL: {url}")
+        st.error("❌ KoBo returned HTML instead of JSON.")
     return None
 
-# ———————————————————
-# 📥 Get export setting
+# ——— Fetch export setting ———
 def get_export_setting():
     url = f"{BASE_URL}/api/v2/assets/{FORM_UID}/export-settings/"
     data = get_json_response(url)
     if not data or "results" not in data or not data["results"]:
-        st.error("⚠️ No export settings found or invalid token.")
+        st.warning("⚠️ No export setting found — go to KoBo and manually export data once.")
         return None
     return data["results"][0]
 
-# ———————————————————
-# ⬇️ Download exported XLSX/CSV
+# ——— Download and clean exported data ———
 def download_exported_data():
     setting = get_export_setting()
-    if not setting:
-        return pd.DataFrame()
-
-    data_url = setting.get("data_url_xlsx") or setting.get("data_url_csv")
-    if not data_url:
-        st.error("❌ No download URL in export setting.")
-        return pd.DataFrame()
-
-    try:
-        res = requests.get(data_url, headers=HEADERS)
-        res.raise_for_status()
-        df = pd.read_excel(BytesIO(res.content))
-
-        # ✅ Remove metadata columns
-        unwanted = [
-            "start", "end", "_id", "_uuid", "_validation_status",
-            "_notes", "_status", "_submitted_by", "_tags", "__version__"
-        ]
-        df.drop(columns=[col for col in unwanted if col in df.columns], inplace=True)
-        return df
-
-    except Exception as e:
-        st.error(f"❌ Failed to download/export XLSX: {e}")
-        return pd.DataFrame()
-
-              # ✅ Remove metadata columns
-        unwanted = [
-            "start", "end", "_id", "_uuid", "_validation_status",
-            "_notes", "_status", "_submitted_by", "_tags", "__version__"
-        ]
-        df.drop(columns=[col for col in unwanted if col in df.columns], inplace=True)
-
+    if
