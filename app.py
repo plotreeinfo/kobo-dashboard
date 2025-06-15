@@ -91,7 +91,16 @@ with st.spinner("⏳ Fetching data..."):
 
 if df is not None and not df.empty:
     st.success(f"✅ Loaded {len(df)} records")
-    col = st.selectbox("Filter column", df.columns)
-    text = st.text_input("Enter text to filter (optional)")
+    
+    col = st.selectbox("🔍 Filter by column", df.columns)
+    text = st.text_input("Enter text to filter")
+    
     if text:
-        df = df[df[col].astype(str).str.contains(text, case=F]()
+        df = df[df[col].astype(str).str.contains(text, case=False, na=False)]
+
+    st.dataframe(df, use_container_width=True)
+    st.download_button("⬇️ Download CSV", df.to_csv(index=False), "data.csv", "text/csv")
+    st.download_button("⬇️ Download Excel", df.to_excel(index=False), "data.xlsx", "application/vnd.ms-excel")
+
+else:
+    st.warning("⚠️ No data found or export is missing.")
