@@ -3,64 +3,54 @@ import pandas as pd
 import requests
 from io import BytesIO
 
-# --- Settings ---
+# Set title
+st.title("📊 KoBoToolbox Sanitation Dashboard")
+
+# Kobo settings
 KOBO_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
-FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
-BASE_URL = "https://kf.kobotoolbox.org"
-HEADERS = {"Authorization": f"Token {KOBO_TOKEN}"}
+EXPORT_URL = "https://kf.kobotoolbox.org/api/v2/assets/aJHsRZXT3XEpCoxn9Ct3qZ/export-settings/esnia8U2QVxNnjzMY4p87ss/data.xlsx"
 
-st.set_page_config("KoBo Debug Dashboard", layout="wide")
-st.title("🛠️ KoBo Debug Viewer")
+@st.cache_data(show_spinner=True)
+def fetch_kobo_data():
+    headers = {"Authorization": f"Token {KOBO_TOKEN}"}
+    try:
+        response = requests.get(EXPORT_URL, headers=headers)
+        response.raise_for_status()
+        df = pd.read_excel(BytesIO(response.content))
+        return df
+    except requests.exceptions.RequestException as e:
+        st.error(f"❌ Request failed: {e}")
+        return None
+    except Exception as e:
+        st.error(f"❌ Unexpected error: {e}")
+        return None
 
-def log(msg):
-    st.markdown(f"**🪵 {msg}**")
+# Fetch data
+df = fetch_kobo_data()
+if df is not None and not df.empty:
+    st.success("✅ Data loaded successfully!")
 
-# --- Step 1: Fetch export-settings ---
-url_settings = f"{BASE_URL}/api/v2/assets/{FORM_UID}/export-settings/"
-log(f"Fetch Export Settings URL: {url_settings}")
-resp = requests.get(url_settings, headers=HEADERS)
-log(f"HTTP Status Code: {resp.status_code}")
-try:
-    data = resp.json()
-    log("Export Settings JSON:")
-    st.json(data)
-except Exception as e:
-    log(f"❌ JSON parsing error: {e}")
-    st.text(resp.text[:500])
-    st.stop()
+    # Filter UI
+    st.subheader("🔍 Filter Data")
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            search_term = st.text_input(f"Filter '{col}'", "")
+            if search_term:
+                df = df[df[col].astype(str).str.contains(search_term, case=False, na=False)]
 
-results = data.get("results", [])
-if not results:
-    log("❌ 'results' is empty – no export-settings found.")
-    st.stop()
+    # Display table
+    st.subheader("📋 Data Preview")
+    st.dataframe(df, use_container_width=True)
 
-# --- Step 2: Use the first export setting ---
-setting = results[0]
-log(f"Using export setting UID: {setting.get('uid')}")
-log("Full export setting object:")
-st.json(setting)
+    # Download button
+    output = BytesIO()
+    df.to_excel(output, index=False)
+    st.download_button(
+        label="📥 Download Filtered Data as XLSX",
+        data=output.getvalue(),
+        file_name="filtered_kobo_data.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+else:
+    st.warning("⚠️ No data to show. Make sure export is correct and data is submitted.")
 
-# --- Step 3: Extract download URL and fetch data ---
-data_url = setting.get("data_url_xlsx") or setting.get("data_url_csv")
-if not data_url:
-    log("❌ No 'data_url_xlsx' or 'data_url_csv' found.")
-    st.stop()
-
-log(f"Data Download URL: {data_url}")
-resp2 = requests.get(data_url, headers=HEADERS)
-log(f"Download HTTP Status Code: {resp2.status_code}")
-if resp2.status_code != 200:
-    st.text(resp2.text[:500])
-    st.stop()
-
-# --- Step 4: Try reading into DataFrame ---
-try:
-    if "xlsx" in data_url:
-        df = pd.read_excel(BytesIO(resp2.content))
-    else:
-        df = pd.read_csv(BytesIO(resp2.content))
-    log(f"📊 Loaded DataFrame with {len(df)} rows and {len(df.columns)} columns")
-    st.dataframe(df)
-except Exception as e:
-    log(f"❌ Error parsing data file: {e}")
-    st.stop()
