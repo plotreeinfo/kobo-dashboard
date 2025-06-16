@@ -11,6 +11,18 @@ DATE_COL = "today"  # Update with your actual date column name
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="Kobo Dashboard", layout="wide")
+
+# Hide Streamlit default UI elements
+hide_streamlit_style = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    .st-emotion-cache-zq5wmm.ezrtsby0 {display: none;} /* Hides top-right buttons */
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
 st.title("📊 Kobo Data Dashboard")
 
 # --- FUNCTIONS ---
@@ -47,12 +59,13 @@ if not df.empty:
     if DATE_COL in df.columns:
         min_date = df[DATE_COL].min()
         max_date = df[DATE_COL].max()
-        start_date = st.sidebar.date_input("Start Date", value=min_date.date(), min_value=min_date.date(), max_value=max_date.date())
-        end_date = st.sidebar.date_input("End Date", value=max_date.date(), min_value=min_date.date(), max_value=max_date.date())
-
-        # Apply date filter safely
-        if start_date <= end_date:
-            df = df[(df[DATE_COL] >= pd.to_datetime(start_date)) & (df[DATE_COL] <= pd.to_datetime(end_date))]
+        try:
+            start_date = st.sidebar.date_input("Start Date", value=min_date.date(), min_value=min_date.date(), max_value=max_date.date())
+            end_date = st.sidebar.date_input("End Date", value=max_date.date(), min_value=min_date.date(), max_value=max_date.date())
+            if start_date <= end_date:
+                df = df[(df[DATE_COL] >= pd.to_datetime(start_date)) & (df[DATE_COL] <= pd.to_datetime(end_date))]
+        except:
+            st.sidebar.warning("Invalid date selection.")
 
     # Single filter dropdown
     text_cols = [col for col in df.select_dtypes(include='object').columns if df[col].nunique() < 100]
@@ -66,8 +79,13 @@ if not df.empty:
     st.markdown(f"### Showing {len(df)} records")
     st.dataframe(df, use_container_width=True)
 
-    # --- DOWNLOAD BUTTON ---
+    # --- DOWNLOAD BUTTONS ---
     csv = df.to_csv(index=False).encode('utf-8')
     st.download_button("📥 Download Filtered Data (CSV)", data=csv, file_name="filtered_kobo_data.csv", mime="text/csv")
+
+    xlsx = BytesIO()
+    df.to_excel(xlsx, index=False, engine='xlsxwriter')
+    xlsx.seek(0)
+    st.download_button("📥 Download Filtered Data (XLSX)", data=xlsx, file_name="filtered_kobo_data.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 else:
     st.warning("No data to display.")
