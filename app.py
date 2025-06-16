@@ -35,20 +35,31 @@ df = download_exported_data()
 
 if not df.empty:
     st.success("✅ Data loaded successfully!")
-    
-    # === FILTER SECTION ===
-    with st.expander("🔍 Filter Data", expanded=False):
-        filter_col = st.selectbox("Select column to filter", df.columns)
-        text = st.text_input("Enter filter text")
-        if text:
-            df = df[df[filter_col].astype(str).str.contains(text, case=False, na=False)]
+
+    # === SIDEBAR FILTERS ===
+    st.sidebar.header("🔍 Filter Data")
+
+    selected_columns = st.sidebar.multiselect("Select columns to filter", df.columns)
+
+    for col in selected_columns:
+        if pd.api.types.is_numeric_dtype(df[col]):
+            min_val = float(df[col].min())
+            max_val = float(df[col].max())
+            step = (max_val - min_val) / 100 if max_val > min_val else 1
+            selected_range = st.sidebar.slider(f"{col}", min_value=min_val, max_value=max_val, value=(min_val, max_val), step=step)
+            df = df[df[col].between(*selected_range)]
+        else:
+            unique_vals = df[col].dropna().unique()
+            selected_vals = st.sidebar.multiselect(f"{col}", unique_vals)
+            if selected_vals:
+                df = df[df[col].isin(selected_vals)]
 
     # === DISPLAY DATA ===
     st.dataframe(df, use_container_width=True)
 
     # === DOWNLOAD BUTTON ===
     csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("⬇️ Download CSV", data=csv, file_name="kobo_data.csv", mime="text/csv")
+    st.download_button("⬇️ Download Filtered CSV", data=csv, file_name="filtered_kobo_data.csv", mime="text/csv")
 
 else:
     st.warning("⚠️ No data available or failed to load from KoBoToolbox.")
