@@ -22,64 +22,23 @@ def download_exported_data():
         response = requests.get(url, headers=headers)
         response.raise_for_status()
         df = pd.read_excel(io.BytesIO(response.content), engine="openpyxl")
-        df = df.loc[:, ~df.columns.str.match(r"^Unnamed: \d+$")]
+        df = df.loc[:, ~df.columns.str.contains(r"^Unnamed:")]
         if DATE_COLUMN in df.columns:
             df[DATE_COLUMN] = pd.to_datetime(df[DATE_COLUMN], errors="coerce")
         return df
-    except Exception as e:
-        st.warning("⚠️ Unable to load data.")
+    except Exception:
         return pd.DataFrame()
 
 df = download_exported_data()
 
-if not df.empty:
-    st.success("✅ Data loaded successfully!")
-
+if df.empty:
+    st.warning("⚠️ No data loaded. Please check API token, form UID or export settings.")
+else:
     original_count = len(df)
 
     # === SIDEBAR FILTERS ===
-    st.sidebar.header("🔍 Filter Data")
+    st.sidebar.header("🔍 Filters")
 
-    # Date filter
+    # DATE FILTER
     if DATE_COLUMN in df.columns and pd.api.types.is_datetime64_any_dtype(df[DATE_COLUMN]):
-        valid_dates = df[DATE_COLUMN].dropna()
-        if not valid_dates.empty:
-            min_date = valid_dates.min().date()
-            max_date = valid_dates.max().date()
-            start_date, end_date = st.sidebar.date_input(
-                "📅 Date range",
-                value=(min_date, max_date),
-                min_value=min_date,
-                max_value=max_date,
-            )
-            try:
-                if start_date and end_date:
-                    df = df[df[DATE_COLUMN].between(pd.to_datetime(start_date), pd.to_datetime(end_date))]
-            except:
-                pass  # Ignore any date filtering errors
-
-    # Dynamic column filters
-    selected_columns = st.sidebar.multiselect("🎯 Filter Columns", df.columns)
-
-    for col in selected_columns:
-        if pd.api.types.is_numeric_dtype(df[col]):
-            min_val = float(df[col].min())
-            max_val = float(df[col].max())
-            step = (max_val - min_val) / 100 if max_val > min_val else 1
-            selected_range = st.sidebar.slider(f"{col}", min_val, max_val, (min_val, max_val), step=step)
-            df = df[df[col].between(*selected_range)]
-        else:
-            unique_vals = df[col].dropna().unique()
-            selected_vals = st.sidebar.multiselect(f"{col}", unique_vals)
-            if selected_vals:
-                df = df[df[col].isin(selected_vals)]
-
-    # === SHOW DATA ===
-    st.markdown(f"**🔢 Showing {len(df)} of {original_count} records**")
-    st.dataframe(df, use_container_width=True)
-
-    # === DOWNLOAD BUTTON ===
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("⬇️ Download Filtered Data", data=csv, file_name="filtered_kobo_data.csv", mime="text/csv")
-else:
-    st.warning("⚠️ No data available. Please check export settings or form submissions.")
+        date_col = df[DATE_COL_]()_
