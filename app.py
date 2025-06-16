@@ -7,7 +7,7 @@ import io
 KOBO_API_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
 FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
 EXPORT_SETTING_UID = "esnia8U2QVxNnjzMY4p87ss"
-DATE_COLUMN = "today"  # You can change this if your form uses a different date field
+DATE_COLUMN = "today"
 
 # === PAGE CONFIG ===
 st.set_page_config(page_title="📊 KoBo Data Dashboard", layout="wide")
@@ -27,7 +27,7 @@ def download_exported_data():
             df[DATE_COLUMN] = pd.to_datetime(df[DATE_COLUMN], errors="coerce")
         return df
     except Exception as e:
-        st.error(f"❌ Error fetching KoBo data:\n{e}")
+        st.warning("⚠️ Unable to load data.")
         return pd.DataFrame()
 
 df = download_exported_data()
@@ -41,17 +41,22 @@ if not df.empty:
     st.sidebar.header("🔍 Filter Data")
 
     # Date filter
-    if DATE_COLUMN in df.columns:
-        min_date = df[DATE_COLUMN].min()
-        max_date = df[DATE_COLUMN].max()
-        start_date, end_date = st.sidebar.date_input(
-            "📅 Date range",
-            [min_date, max_date],
-            min_value=min_date,
-            max_value=max_date,
-        )
-        if start_date and end_date:
-            df = df[df[DATE_COLUMN].between(pd.to_datetime(start_date), pd.to_datetime(end_date))]
+    if DATE_COLUMN in df.columns and pd.api.types.is_datetime64_any_dtype(df[DATE_COLUMN]):
+        valid_dates = df[DATE_COLUMN].dropna()
+        if not valid_dates.empty:
+            min_date = valid_dates.min().date()
+            max_date = valid_dates.max().date()
+            start_date, end_date = st.sidebar.date_input(
+                "📅 Date range",
+                value=(min_date, max_date),
+                min_value=min_date,
+                max_value=max_date,
+            )
+            try:
+                if start_date and end_date:
+                    df = df[df[DATE_COLUMN].between(pd.to_datetime(start_date), pd.to_datetime(end_date))]
+            except:
+                pass  # Ignore any date filtering errors
 
     # Dynamic column filters
     selected_columns = st.sidebar.multiselect("🎯 Filter Columns", df.columns)
