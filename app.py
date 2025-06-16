@@ -40,9 +40,10 @@ if df is not None and not df.empty:
 
     # Display table
     st.subheader("📋 Data Preview")
-    st.dataframe(df, use_container_width=True)
+    visible_df = df.loc[:, ~df.columns.str.contains("^Unnamed")]
+st.dataframe(visible_df, use_container_width=True)
 
-    # Download button
+# Download button
     output = BytesIO()
     df.to_excel(output, index=False)
     st.download_button(
