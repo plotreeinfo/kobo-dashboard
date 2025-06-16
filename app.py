@@ -5,7 +5,7 @@ from io import BytesIO
 from datetime import datetime
 
 # --- CONFIG ---
-KOBO_API_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
+KOBO_API_TOKEN = st.secrets["KOBO_API_TOKEN"]
 EXPORT_URL = "https://kf.kobotoolbox.org/api/v2/assets/aJHsRZXT3XEpCoxn9Ct3qZ/export-settings/esnia8U2QVxNnjzMY4p87ss/data.xlsx"
 DATE_COL = "today"  # Update with your actual date column name
 
