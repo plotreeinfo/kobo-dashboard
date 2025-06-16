@@ -41,4 +41,13 @@ else:
 
     # DATE FILTER
     if DATE_COLUMN in df.columns and pd.api.types.is_datetime64_any_dtype(df[DATE_COLUMN]):
-        date_col = df[DATE_COL_]()_
+        date_col = df[DATE_COLUMN].dropna()
+        if not date_col.empty:
+            min_date = date_col.min().date()
+            max_date = date_col.max().date()
+
+            start_date = st.sidebar.date_input("📅 Start date", min_value=min_date, max_value=max_date, value=min_date)
+            end_date = st.sidebar.date_input("📅 End date", min_value=min_date, max_value=max_date, value=max_date)
+
+            # Apply only if both are valid
+            if start_date and end_date and start_date <_
