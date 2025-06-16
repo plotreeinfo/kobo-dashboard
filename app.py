@@ -10,7 +10,7 @@ EXPORT_URL = "https://kf.kobotoolbox.org/api/v2/assets/aJHsRZXT3XEpCoxn9Ct3qZ/ex
 DATE_COL = "today"  # Update with your actual date column name
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="Kobo Dashboard", layout="wide")
+st.set_page_config(page_title="Onsite Sanitation Dashboard", layout="wide")
 
 # Hide Streamlit default UI elements
 hide_streamlit_style = """
@@ -23,7 +23,7 @@ hide_streamlit_style = """
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-st.title("📊 Kobo Data Dashboard")
+st.title("📊 Onsite Sanitation Dashboard")
 
 # --- FUNCTIONS ---
 def load_data():
@@ -81,11 +81,11 @@ if not df.empty:
 
     # --- DOWNLOAD BUTTONS ---
     csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Download Filtered Data (CSV)", data=csv, file_name="filtered_kobo_data.csv", mime="text/csv")
+    st.download_button("📥 Download Data (CSV)", data=csv, file_name="Onsite_Sanitation_data.csv", mime="text/csv")
 
     xlsx = BytesIO()
     df.to_excel(xlsx, index=False, engine='xlsxwriter')
     xlsx.seek(0)
-    st.download_button("📥 Download Filtered Data (XLSX)", data=xlsx, file_name="filtered_kobo_data.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.download_button("📥 Download Data (XLSX)", data=xlsx, file_name="Onsite_Sanitation_data.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 else:
     st.warning("No data to display.")
