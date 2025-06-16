@@ -50,4 +50,5 @@ else:
             end_date = st.sidebar.date_input("📅 End date", min_value=min_date, max_value=max_date, value=max_date)
 
             # Apply only if both are valid
-            if start_date and end_date and start_date <_
+            if start_date and end_date and start_date <= end_date:
+
