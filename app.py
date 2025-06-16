@@ -1,56 +1,54 @@
 import streamlit as st
 import pandas as pd
 import requests
-from io import BytesIO
+import io
 
-# Set title
-st.title("📊 KoBoToolbox Sanitation Dashboard")
+# === SETTINGS ===
+KOBO_API_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
+FORM_UID = "aJHsRZXT3XEpCoxn9Ct3qZ"
+EXPORT_SETTING_UID = "esnia8U2QVxNnjzMY4p87ss"
 
-# Kobo settings
-KOBO_TOKEN = "04714621fa3d605ff0a4aa5cc2df7cfa961bf256"
-EXPORT_URL = "https://kf.kobotoolbox.org/api/v2/assets/aJHsRZXT3XEpCoxn9Ct3qZ/export-settings/esnia8U2QVxNnjzMY4p87ss/data.xlsx"
+# === PAGE CONFIG ===
+st.set_page_config(page_title="📊 KoBo Data Dashboard", layout="wide")
+st.title("📥 KoBoToolbox Data Viewer")
 
-@st.cache_data(show_spinner=True)
-def fetch_kobo_data():
-    headers = {"Authorization": f"Token {KOBO_TOKEN}"}
+# === DATA FETCH FUNCTION ===
+@st.cache_data(ttl=180)
+def download_exported_data():
     try:
-        response = requests.get(EXPORT_URL, headers=headers)
+        export_url = f"https://kf.kobotoolbox.org/api/v2/assets/{FORM_UID}/export-settings/{EXPORT_SETTING_UID}/data.xlsx"
+        headers = {"Authorization": f"Token {KOBO_API_TOKEN}"}
+        response = requests.get(export_url, headers=headers)
         response.raise_for_status()
-        df = pd.read_excel(BytesIO(response.content))
+
+        # Load Excel and drop unnamed columns
+        df = pd.read_excel(io.BytesIO(response.content), engine="openpyxl")
+        df = df.loc[:, ~df.columns.str.match(r"^Unnamed: \d+$")]
         return df
-    except requests.exceptions.RequestException as e:
-        st.error(f"❌ Request failed: {e}")
-        return None
+
     except Exception as e:
-        st.error(f"❌ Unexpected error: {e}")
-        return None
+        st.error(f"❌ Failed to fetch/export KoBo data:\n\n{e}")
+        return pd.DataFrame()
 
-# Fetch data
-df = fetch_kobo_data()
-if df is not None and not df.empty:
+# === MAIN LOGIC ===
+df = download_exported_data()
+
+if not df.empty:
     st.success("✅ Data loaded successfully!")
+    
+    # === FILTER SECTION ===
+    with st.expander("🔍 Filter Data", expanded=False):
+        filter_col = st.selectbox("Select column to filter", df.columns)
+        text = st.text_input("Enter filter text")
+        if text:
+            df = df[df[filter_col].astype(str).str.contains(text, case=False, na=False)]
 
-    # Filter UI
-    st.subheader("🔍 Filter Data")
-    for col in df.columns:
-        if df[col].dtype == 'object':
-            search_term = st.text_input(f"Filter '{col}'", "")
-            if search_term:
-                df = df[df[col].astype(str).str.contains(search_term, case=False, na=False)]
-
-    # Display table
-    st.subheader("📋 Data Preview")
+    # === DISPLAY DATA ===
     st.dataframe(df, use_container_width=True)
 
-    # Download button
-    output = BytesIO()
-    df.to_excel(output, index=False)
-    st.download_button(
-        label="📥 Download Filtered Data as XLSX",
-        data=output.getvalue(),
-        file_name="filtered_kobo_data.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-else:
-    st.warning("⚠️ No data to show. Make sure export is correct and data is submitted.")
+    # === DOWNLOAD BUTTON ===
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button("⬇️ Download CSV", data=csv, file_name="kobo_data.csv", mime="text/csv")
 
+else:
+    st.warning("⚠️ No data available or failed to load from KoBoToolbox.")
