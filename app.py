@@ -16,7 +16,11 @@ def fetch_kobo_data():
     try:
         response = requests.get(EXPORT_URL, headers=headers)
         response.raise_for_status()
-        df = pd.read_excel(BytesIO(response.content))
+       df = pd.read_excel(io.BytesIO(response.content), engine="openpyxl")
+
+# 🚫 Drop all columns with names like 'Unnamed: 182', 'Unnamed: 5', etc.
+df = df.loc[:, ~df.columns.str.match(r"^Unnamed: \d+$")]
+
         return df
     except requests.exceptions.RequestException as e:
         st.error(f"❌ Request failed: {e}")
