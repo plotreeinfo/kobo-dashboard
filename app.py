@@ -16,11 +16,7 @@ def fetch_kobo_data():
     try:
         response = requests.get(EXPORT_URL, headers=headers)
         response.raise_for_status()
-       df = pd.read_excel(io.BytesIO(response.content), engine="openpyxl")
-
-# 🚫 Drop all columns with names like 'Unnamed: 182', 'Unnamed: 5', etc.
-df = df.loc[:, ~df.columns.str.match(r"^Unnamed: \d+$")]
-
+        df = pd.read_excel(BytesIO(response.content))
         return df
     except requests.exceptions.RequestException as e:
         st.error(f"❌ Request failed: {e}")
@@ -44,10 +40,9 @@ if df is not None and not df.empty:
 
     # Display table
     st.subheader("📋 Data Preview")
-    visible_df = df.loc[:, ~df.columns.str.contains("^Unnamed")]
-st.dataframe(visible_df, use_container_width=True)
+    st.dataframe(df, use_container_width=True)
 
-# Download button
+    # Download button
     output = BytesIO()
     df.to_excel(output, index=False)
     st.download_button(
